@@ -36,6 +36,11 @@ The eval user sees only the eval corpus.
 | prompt v3 | `294f6402d2` | 1.000 | 1.000 | 0.893 | 0.957 | 0 | 1.0 | 29.3 |
 | v3 + reranker MiniLM-L6 | `294f6402d2` | 1.000 | 1.000 | 0.862 | 0.957 | 0 | 1.0 | 29.9 |
 | **prompt v5 (shipped)** | `277b9220b4` | **1.000** | **1.000** | **1.000** | **0.958** | **0** | **1.0** | 29.0 |
+| **7B: `qwen2.5:7b-instruct`, prompt v5** | `277b9220b4` | **1.000** | **1.000** | 0.964 | **1.000** | **0** | **1.0** | 44.1 |
+
+The 7B row is the customer default model. It was measured on the same laptop with 13 of its 29
+layers on a 4 GB NVIDIA T500 and the rest on the CPU (`DEV_GPU=1`). Treat its latency as a
+worst case; a server GPU with 8 GB+ holds the whole model.
 
 The v5 run includes one more case (`carryover-days`), added after an end-to-end test exposed a
 regression that v3 caused on that phrasing. The v2 run was also affected by a duplicated corpus
@@ -52,9 +57,13 @@ regression that v3 caused on that phrasing. The v2 run was also affected by a du
    - It is pulled toward the quoted refusal sentence. v3 refused an answerable question, and even
      the baseline once wrote "I could find that in your documents". v5 moved the refusal rule to
      the end and limited it to "no excerpt relates to the question at all".
-   - The remaining v5 miss (`it-setup-time`) is the citation-for-fact pattern.
-   - Customers run 7B by default, which should be less fragile, but that hasn't been measured on
-     this machine for lack of memory.
+   - The remaining 3B miss (`it-setup-time`) is the citation-for-fact pattern.
+   - **7B is clearly better.** It answered all 24 answerable cases correctly, including
+     `it-setup-time`, and kept perfect abstention. Its one weakness is a single extra citation: on
+     `carryover-days` it also cited an unrelated page next to a correct caveat about part-time
+     staff. It also gives fuller answers; asked about mileage, it broke the rate down per vehicle
+     from the spreadsheet.
+   - The prompt was tuned on 3B and transfers to 7B without changes.
 3. **Duplicate documents waste context.** Office files embed timestamps, so a re-saved copy uploads
    as a new document with identical text. Retrieval now drops chunks whose text duplicates one
    already selected.

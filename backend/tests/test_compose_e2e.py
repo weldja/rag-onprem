@@ -115,7 +115,11 @@ def test_stream_ends_with_cited_done_event(admin: httpx.Client) -> None:
     with admin.stream(
         "POST",
         "/api/ask/stream",
-        json={"question": "What is the mileage rate for the first 10,000 miles?"},
+        # Scoped: the eval corpus's expense spreadsheet answers this too.
+        json={
+            "question": "What is the mileage rate for the first 10,000 miles?",
+            "document_ids": [_sample_id(admin)],
+        },
     ) as resp:
         assert resp.status_code == 200
         name = ""

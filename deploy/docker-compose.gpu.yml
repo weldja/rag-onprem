@@ -1,0 +1,11 @@
+# Dev GPU override (NVIDIA). scripts/_common.sh adds it when .env has DEV_GPU=1.
+# Customers get the same override from the release bundle automatically.
+services:
+  ollama:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

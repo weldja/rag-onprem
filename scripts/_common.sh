@@ -34,11 +34,11 @@ BASE_URL="https://127.0.0.1:${HTTPS_PORT}"
 CURL=(curl -sS -k)
 
 compose() {
-    docker compose \
-        --env-file "$ROOT_NATIVE/.env" \
-        -f "$ROOT_NATIVE/deploy/docker-compose.yml" \
-        -f "$ROOT_NATIVE/deploy/docker-compose.dev.yml" \
-        "$@"
+    local files=(-f "$ROOT_NATIVE/deploy/docker-compose.yml" -f "$ROOT_NATIVE/deploy/docker-compose.dev.yml")
+    if [ "${DEV_GPU:-0}" = 1 ]; then
+        files+=(-f "$ROOT_NATIVE/deploy/docker-compose.gpu.yml")
+    fi
+    docker compose --env-file "$ROOT_NATIVE/.env" "${files[@]}" "$@"
 }
 
 require_env() {
