@@ -89,6 +89,11 @@ export default function Admin({ me }: { me: Me }) {
                 <td>
                   <strong>{u.username}</strong>
                   {u.display_name && <span className="meta"> {u.display_name}</span>}
+                  {u.auth_source === "ldap" && (
+                    <span className="badge" title="Signs in with the company directory">
+                      directory
+                    </span>
+                  )}
                   {u.disabled && <span className="badge failed">disabled</span>}
                 </td>
                 {groups.map((g) => (
@@ -111,9 +116,11 @@ export default function Admin({ me }: { me: Me }) {
                   />
                 </td>
                 <td className="actions">
-                  <button className="link" onClick={() => resetPassword(u)}>
-                    Reset password
-                  </button>
+                  {u.auth_source === "local" && (
+                    <button className="link" onClick={() => resetPassword(u)}>
+                      Reset password
+                    </button>
+                  )}
                   {u.id !== me.id && (
                     <>
                       <button

@@ -8,6 +8,7 @@ from sqlalchemy import Engine
 
 from app.auth import sessions
 from app.auth.acl import Viewer
+from app.auth.ldap import Directory, LdapDirectory
 from app.core.config import Settings, get_settings
 from app.db.engine import get_engine
 from app.llm.base import Embedder, LLMClient
@@ -39,6 +40,14 @@ def get_embedder() -> Embedder:
 
 def get_db() -> Engine:
     return get_engine()
+
+
+@lru_cache
+def get_directory() -> Directory | None:
+    """The LDAP directory, or None when LDAP_ENABLED is false. Bad configuration
+    raises DirectoryConfigError (checked at start-up)."""
+    s = get_settings()
+    return LdapDirectory(s) if s.ldap_enabled else None
 
 
 def get_current_user(

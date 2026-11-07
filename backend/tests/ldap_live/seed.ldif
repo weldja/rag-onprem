@@ -1,0 +1,26 @@
+dn: ou=people,dc=example,dc=test
+objectClass: organizationalUnit
+ou: people
+
+dn: ou=groups,dc=example,dc=test
+objectClass: organizationalUnit
+ou: groups
+
+dn: uid=ann,ou=people,dc=example,dc=test
+objectClass: inetOrgPerson
+uid: ann
+cn: Ann Smith
+sn: Smith
+userPassword: ann-directory-pw
+
+dn: uid=bob,ou=people,dc=example,dc=test
+objectClass: inetOrgPerson
+uid: bob
+cn: Bob Jones
+sn: Jones
+userPassword: bob-directory-pw
+
+dn: cn=finance,ou=groups,dc=example,dc=test
+objectClass: groupOfNames
+cn: finance
+member: uid=ann,ou=people,dc=example,dc=test

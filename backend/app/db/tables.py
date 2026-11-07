@@ -81,6 +81,11 @@ users = Table(
     Column("failed_logins", Integer, nullable=False, server_default="0"),
     Column("locked_until", DateTime(timezone=True), nullable=True),
     Column("created_at", DateTime(timezone=True), server_default=func.now(), nullable=False),
+    # 'local' (password hash here) or 'ldap' (password checked by the directory;
+    # password_hash holds an unusable marker).
+    Column("auth_source", Text, nullable=False, server_default="local"),
+    Column("ldap_dn", Text, nullable=True),
+    Column("last_login_at", DateTime(timezone=True), nullable=True),
     UniqueConstraint("username", name="uq_users_username"),
 )
 

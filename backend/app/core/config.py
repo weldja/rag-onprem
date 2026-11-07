@@ -71,6 +71,29 @@ class Settings(BaseSettings):
     password_min_length: int = Field(default=12, ge=8)
     default_group: str = "All staff"
 
+    # Directory sign-in (LDAP / Active Directory). Local accounts keep working,
+    # so the install-time admin remains a break-glass login.
+    ldap_enabled: bool = False
+    ldap_url: str = ""  # ldaps://dc1.example.local or ldap://... with LDAP_START_TLS=true
+    ldap_start_tls: bool = False
+    ldap_ca_file: str = ""  # PEM CA bundle for the directory's certificate (empty = system CAs)
+    ldap_allow_plaintext: bool = False  # only for isolated test setups
+    ldap_bind_dn: str = ""  # service account used to look users up
+    ldap_bind_password: str = ""
+    ldap_user_base_dn: str = ""
+    # {username} is replaced by the escaped sign-in name.
+    ldap_user_filter: str = "(&(objectClass=user)(sAMAccountName={username}))"
+    ldap_display_name_attr: str = "displayName"
+    ldap_group_base_dn: str = ""  # where to look for groups (empty = no group sync)
+    # {user_dn} is replaced by the escaped user DN. For nested AD groups use
+    # (member:1.2.840.113556.1.4.1941:={user_dn})
+    ldap_group_filter: str = "(member={user_dn})"
+    # Directory group DN -> app group name. Only these app groups are synced.
+    ldap_group_map: dict[str, str] = Field(default_factory=dict)
+    ldap_admin_group: str = ""  # members of this group DN are administrators
+    ldap_required_group: str = ""  # if set, only members of this group DN may sign in
+    ldap_timeout_s: float = Field(default=10.0, gt=0)
+
     log_level: str = "INFO"
 
     @field_validator("rerank_min_score", mode="before")

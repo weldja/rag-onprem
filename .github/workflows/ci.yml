@@ -79,6 +79,8 @@ jobs:
         run: bash scripts/egress-check.sh
       - name: Database tests (ACLs, sessions, queue)
         run: bash scripts/test-db.sh -q
+      - name: Directory sign-in against a real OpenLDAP server over TLS
+        run: bash scripts/test-ldap.sh
       - name: End-to-end smoke (HTTPS, auth, uploads, ACL listing)
         run: bash scripts/e2e.sh -k "health or redirect or sign_in"
       - name: Release compose file is valid

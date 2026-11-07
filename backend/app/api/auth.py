@@ -1,15 +1,19 @@
 """Sign in/out, current user, own password, and user/group administration."""
 
+import logging
 from datetime import datetime
+from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
 
-from app.api.deps import AdminUser, AppSettings, CurrentUser, Db
+from app.api.deps import AdminUser, AppSettings, CurrentUser, Db, get_directory
 from app.auth import accounts, sessions
+from app.auth.ldap import Directory, DirectoryUnavailableError
 from app.auth.passwords import WeakPasswordError, verify_password
 from app.db.tables import users
 
+log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["auth"])
 
 
@@ -29,6 +33,7 @@ class MeOut(BaseModel):
     display_name: str | None
     is_admin: bool
     groups: list[GroupRef]
+    auth_source: str  # 'local' or 'ldap' (password managed by the directory)
 
 
 class PasswordIn(BaseModel):
@@ -44,6 +49,8 @@ class UserOut(BaseModel):
     disabled: bool
     group_ids: list[int]
     created_at: datetime
+    auth_source: str
+    last_login_at: datetime | None
 
 
 class UserCreateIn(BaseModel):
@@ -81,6 +88,7 @@ def _me(engine: Db, viewer_id: int) -> MeOut:
         display_name=user.display_name,
         is_admin=user.is_admin,
         groups=[GroupRef(id=g, name=names[g]) for g in user.group_ids if g in names],
+        auth_source=user.auth_source,
     )
 
 
@@ -88,8 +96,21 @@ def _me(engine: Db, viewer_id: int) -> MeOut:
 
 
 @router.post("/auth/login", response_model=MeOut)
-def login(body: LoginIn, response: Response, engine: Db, settings: AppSettings) -> MeOut:
-    viewer = accounts.authenticate(engine, body.username, body.password, settings)
+def login(
+    body: LoginIn,
+    response: Response,
+    engine: Db,
+    settings: AppSettings,
+    directory: Annotated[Directory | None, Depends(get_directory)],
+) -> MeOut:
+    try:
+        viewer = accounts.authenticate(engine, body.username, body.password, settings, directory)
+    except DirectoryUnavailableError as exc:
+        log.error("Directory sign-in failed: %s", exc)
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "The company directory can't be reached right now. Try again shortly.",
+        ) from exc
     if viewer is None:
         # One message for every failure, so it doesn't reveal which accounts exist.
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Incorrect username or password")
@@ -126,9 +147,16 @@ def change_password(
     body: PasswordIn, request: Request, viewer: CurrentUser, engine: Db, settings: AppSettings
 ) -> Response:
     with engine.connect() as conn:
-        current_hash = conn.execute(
-            users.select().with_only_columns(users.c.password_hash).where(users.c.id == viewer.id)
-        ).scalar_one()
+        current_hash, source = conn.execute(
+            users.select()
+            .with_only_columns(users.c.password_hash, users.c.auth_source)
+            .where(users.c.id == viewer.id)
+        ).one()
+    if source != "local":
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Your password is managed by the company directory; change it there",
+        )
     if not verify_password(current_hash, body.current_password):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Current password is incorrect")
     token = request.cookies.get(sessions.COOKIE_NAME)
@@ -140,7 +168,7 @@ def change_password(
             body.new_password,
             keep_session=sessions.token_hash(token) if token else None,
         )
-    except WeakPasswordError as exc:
+    except (WeakPasswordError, accounts.AccountError) as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 

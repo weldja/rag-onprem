@@ -32,6 +32,12 @@ export default function Account({ me }: { me: Me }) {
         {me.is_admin && " (administrator)"}. Groups:{" "}
         {me.groups.length ? me.groups.map((g) => g.name).join(", ") : "none"}.
       </p>
+      {me.auth_source === "ldap" ? (
+        <p className="card">
+          You sign in with your company account. Change your password the usual way for your
+          company account; the new one works here straight away.
+        </p>
+      ) : (
       <form className="card form-grid" onSubmit={submit}>
         <h3>Change password</h3>
         <label>
@@ -72,6 +78,7 @@ export default function Account({ me }: { me: Me }) {
         )}
         <button className="primary">Change password</button>
       </form>
+      )}
     </section>
   );
 }

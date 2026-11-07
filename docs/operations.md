@@ -69,6 +69,44 @@ Configuration lives in `.env`, which is readable only by its owner. After changi
 - **Lost admin password:** `docker compose exec api python -m app.admin reset-password alice --password-stdin`
   (type the new password, then press Enter).
 
+### Directory sign-in (Active Directory / LDAP)
+
+Staff can sign in with their company account instead of a separate password. Set the `LDAP_*`
+settings in `.env`, then run `docker compose up -d`. If the configuration is incomplete, the API
+refuses to start and says what's missing (`docker compose logs api`).
+
+- **What you need from the directory team:**
+  - the server address (`ldaps://dc1.example.local`)
+  - the CA certificate that signed the directory's certificate
+  - a read-only service account to look users up
+  - the OU where staff accounts and groups live
+- **CA certificate:** save it as `certs/ldap-ca.pem` and set `LDAP_CA_FILE=/etc/rag/certs/ldap-ca.pem`.
+- **Encryption:** the connection is always encrypted and the certificate always checked.
+  - Use `ldaps://`, or `ldap://` with `LDAP_START_TLS=true`.
+  - Plain unencrypted LDAP is refused.
+- **Who can sign in:**
+  - On first sign-in an account is created automatically and shown as "directory" under Admin.
+  - Its password stays in the directory: change it there, not here.
+  - `LDAP_REQUIRED_GROUP` limits sign-in to members of one directory group.
+- **Groups:**
+  - `LDAP_GROUP_MAP` links directory groups to app groups, for example
+    `'{"CN=Finance,OU=Groups,DC=example,DC=local": "Finance"}'`.
+  - Mapped app groups are created if needed and kept in step with the directory at every sign-in.
+  - Unmapped app groups are left for administrators to manage by hand.
+  - For nested AD groups, use the `LDAP_GROUP_FILTER` shown in `.env.example`.
+- **Administrators:** if `LDAP_ADMIN_GROUP` is set, admin rights follow that group at every
+  sign-in, so manual changes made under Admin are overwritten. If it isn't set, admin rights are
+  managed in the app.
+- **Keep a local administrator** (`bash create-admin.sh`) with a name that doesn't exist in the
+  directory. Local accounts always sign in with their own password, even when the directory is
+  unreachable.
+- **Quoting:** single-quote values in `.env` that contain `( ) & { }` or spaces, as in the
+  examples.
+
+If the directory can't be reached, directory users see "The company directory can't be reached
+right now"; local accounts are unaffected. Disabling an account under Admin blocks it here, whatever
+the directory says.
+
 ## 4. Backups
 
 ```bash
@@ -145,6 +183,7 @@ If a release changes the embedding model, documents need re-indexing. They're sh
 | Document stuck in "pending" | `docker compose logs worker` |
 | A document shows "failed" | The error is shown next to it. Often the PDF is encrypted or damaged, or the scan is too poor to read. |
 | Answers are slow | Normal without a GPU. Check that `docker compose ps` shows no restarts and the server isn't swapping. |
+| "The company directory can't be reached" | `docker compose logs api` shows the LDAP error. Check `LDAP_URL`, the firewall, the service account password, and that `certs/ldap-ca.pem` signed the directory's certificate (expired certificates are refused). |
 | "The local model is unavailable" | `docker compose restart ollama`, then wait for it to become healthy. |
 
 Status: `docker compose ps`. Logs: `docker compose logs -f api worker`. Logs stay on this server

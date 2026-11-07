@@ -1,15 +1,25 @@
-"""Users, groups and login."""
+"""Users, groups and login (local accounts and directory users)."""
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import Any
 
-from sqlalchemy import Engine, delete, func, insert, select, update
+from sqlalchemy import Connection, Engine, Row, delete, func, insert, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 
 from app.auth.acl import Viewer
+from app.auth.ldap import Directory, DirectoryUser, normalise_dn
 from app.auth.passwords import check_strength, hash_password, needs_rehash, verify_password
 from app.core.config import Settings
 from app.db.tables import groups, sessions, user_groups, users
+
+log = logging.getLogger(__name__)
+
+# Stored as the password hash of directory users. It isn't a valid Argon2 hash,
+# so a local password check against it always fails.
+DIRECTORY_PASSWORD_MARKER = "!directory"
 
 
 class AccountError(ValueError):
@@ -29,6 +39,8 @@ class UserInfo:
     disabled: bool
     group_ids: list[int]
     created_at: datetime
+    auth_source: str = "local"
+    last_login_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -48,14 +60,134 @@ def normalise_username(username: str) -> str:
 # ------------------------------------------------------------------- login
 
 
-def authenticate(engine: Engine, username: str, password: str, settings: Settings) -> Viewer | None:
-    """Returns the user on success. Counts failures and locks the account for a
-    few minutes after too many, without revealing which part was wrong."""
+def authenticate(
+    engine: Engine,
+    username: str,
+    password: str,
+    settings: Settings,
+    directory: Directory | None = None,
+) -> Viewer | None:
+    """Returns the user on success, None otherwise, without revealing which part
+    was wrong. Failures are counted per account and lock it for a few minutes.
+
+    Local accounts always use their own password, so a local administrator can
+    still sign in when the directory is down. Everyone else is checked against
+    the directory (if configured). Raises DirectoryUnavailableError when the
+    directory can't answer.
+    """
     try:
         name = normalise_username(username)
     except AccountError:
         verify_password(None, password)
         return None
+    if directory is None:
+        return _authenticate_local(engine, name, password, settings)
+
+    with engine.connect() as conn:
+        row = conn.execute(select(users).where(users.c.username == name)).one_or_none()
+        now = conn.execute(select(func.now())).scalar_one()
+    if row is not None and row.auth_source == "local":
+        return _authenticate_local(engine, name, password, settings)
+    if row is not None and (row.disabled or (row.locked_until and row.locked_until > now)):
+        return None  # don't even ask the directory
+
+    found = directory.authenticate(name, password)
+    if found is None:
+        if row is not None:
+            with engine.begin() as conn:
+                _record_failure(conn, row, settings)
+        return None
+    required = settings.ldap_required_group
+    if required and normalise_dn(required) not in found.group_dns:
+        log.info("Directory user %s is not in LDAP_REQUIRED_GROUP", name)
+        return None
+    try:
+        return _sync_directory_user(engine, settings, found)
+    except IntegrityError:
+        # Two first sign-ins raced to create the row; the second one syncs it.
+        return _sync_directory_user(engine, settings, found)
+
+
+def _record_failure(conn: Connection, row: Row[Any], settings: Settings) -> None:
+    failures = row.failed_logins + 1
+    values: dict[str, object] = {"failed_logins": failures}
+    if failures >= settings.login_max_failures:
+        values = {
+            "failed_logins": 0,
+            "locked_until": func.now() + timedelta(minutes=settings.login_lockout_minutes),
+        }
+    conn.execute(update(users).where(users.c.id == row.id).values(**values))
+
+
+def _sync_directory_user(engine: Engine, settings: Settings, found: DirectoryUser) -> Viewer:
+    """Create or refresh the local row for a directory user and sync the app
+    groups that LDAP_GROUP_MAP manages. Other memberships are left alone."""
+    managed = {normalise_dn(dn): name for dn, name in settings.ldap_group_map.items()}
+    wanted_names = {managed[dn] for dn in found.group_dns if dn in managed}
+    with engine.begin() as conn:
+        group_id: dict[str, int] = {}
+        for gname in sorted(set(managed.values())):
+            conn.execute(pg_insert(groups).values(name=gname).on_conflict_do_nothing())
+            group_id[gname] = conn.execute(
+                select(groups.c.id).where(groups.c.name == gname)
+            ).scalar_one()
+
+        row = conn.execute(
+            select(users).where(users.c.username == found.username).with_for_update()
+        ).one_or_none()
+        values: dict[str, object] = {
+            "display_name": found.display_name,
+            "ldap_dn": found.dn,
+            "last_login_at": func.now(),
+            "failed_logins": 0,
+            "locked_until": None,
+        }
+        if settings.ldap_admin_group:
+            values["is_admin"] = normalise_dn(settings.ldap_admin_group) in found.group_dns
+        if row is None:
+            user_id: int = conn.execute(
+                insert(users)
+                .values(
+                    username=found.username,
+                    password_hash=DIRECTORY_PASSWORD_MARKER,
+                    auth_source="ldap",
+                    **values,
+                )
+                .returning(users.c.id)
+            ).scalar_one()
+            default = conn.execute(
+                select(groups.c.id).where(groups.c.name == settings.default_group)
+            ).scalar_one_or_none()
+            if default is not None and settings.default_group not in managed.values():
+                conn.execute(insert(user_groups).values(user_id=user_id, group_id=default))
+        else:
+            if row.auth_source != "ldap":  # a local account with this name took precedence
+                raise AccountError(f"{found.username} is a local account")
+            user_id = row.id
+            conn.execute(update(users).where(users.c.id == user_id).values(**values))
+
+        managed_ids = set(group_id.values())
+        wanted_ids = {group_id[n] for n in wanted_names}
+        if managed_ids - wanted_ids:
+            conn.execute(
+                delete(user_groups).where(
+                    user_groups.c.user_id == user_id,
+                    user_groups.c.group_id.in_(managed_ids - wanted_ids),
+                )
+            )
+        for gid in sorted(wanted_ids):
+            conn.execute(
+                pg_insert(user_groups)
+                .values(user_id=user_id, group_id=gid)
+                .on_conflict_do_nothing()
+            )
+        user = conn.execute(select(users).where(users.c.id == user_id)).one()
+    return Viewer(user.id, user.username, user.is_admin, user.display_name)
+
+
+def _authenticate_local(
+    engine: Engine, name: str, password: str, settings: Settings
+) -> Viewer | None:
     with engine.begin() as conn:
         row = conn.execute(
             select(users).where(users.c.username == name).with_for_update()
@@ -70,17 +202,13 @@ def authenticate(engine: Engine, username: str, password: str, settings: Setting
             return None
         if locked or row.disabled or not ok:
             if not ok:
-                failures = row.failed_logins + 1
-                values: dict[str, object] = {"failed_logins": failures}
-                if failures >= settings.login_max_failures:
-                    values = {
-                        "failed_logins": 0,
-                        "locked_until": func.now()
-                        + timedelta(minutes=settings.login_lockout_minutes),
-                    }
-                conn.execute(update(users).where(users.c.id == row.id).values(**values))
+                _record_failure(conn, row, settings)
             return None
-        values = {"failed_logins": 0, "locked_until": None}
+        values: dict[str, object] = {
+            "failed_logins": 0,
+            "locked_until": None,
+            "last_login_at": func.now(),
+        }
         if needs_rehash(row.password_hash):
             values["password_hash"] = hash_password(password)
         conn.execute(update(users).where(users.c.id == row.id).values(**values))
@@ -151,16 +279,23 @@ def find_user_id(engine: Engine, username: str) -> int | None:
 def set_password(
     engine: Engine, settings: Settings, user_id: int, password: str, *, keep_session: str | None
 ) -> None:
-    """Changes the password and ends the user's other sessions."""
+    """Changes a local account's password and ends the user's other sessions."""
     check_strength(password, settings.password_min_length)
     with engine.begin() as conn:
-        result = conn.execute(
+        source = conn.execute(
+            select(users.c.auth_source).where(users.c.id == user_id)
+        ).scalar_one_or_none()
+        if source is None:
+            raise NotFoundError(user_id)
+        if source != "local":
+            raise AccountError(
+                "This account signs in with the company directory; change the password there"
+            )
+        conn.execute(
             update(users)
             .where(users.c.id == user_id)
             .values(password_hash=hash_password(password), failed_logins=0, locked_until=None)
         )
-        if result.rowcount == 0:
-            raise NotFoundError(user_id)
         stmt = delete(sessions).where(sessions.c.user_id == user_id)
         if keep_session:
             stmt = stmt.where(sessions.c.token_hash != keep_session)
@@ -183,6 +318,8 @@ def list_users(engine: Engine) -> list[UserInfo]:
             r.disabled,
             sorted(by_user.get(r.id, [])),
             r.created_at,
+            r.auth_source,
+            r.last_login_at,
         )
         for r in rows
     ]

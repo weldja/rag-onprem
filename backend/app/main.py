@@ -7,7 +7,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 
 from app.api.auth import router as auth_router
-from app.api.deps import get_ollama, get_reranker
+from app.api.deps import get_directory, get_ollama, get_reranker
 from app.api.documents import router as documents_router
 from app.api.routes import router
 from app.auth.sessions import purge_expired
@@ -53,6 +53,9 @@ def wait_for_models() -> None:
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     wait_for_models()
+    directory = get_directory()  # validates LDAP settings now, not at the first sign-in
+    if directory is not None:
+        log.info("Directory sign-in enabled: %s", get_settings().ldap_url)
     reranker = get_reranker()  # loads now, so a missing model fails start-up clearly
     if reranker is not None:
         log.info("Reranker ready: %s", get_settings().reranker_model)

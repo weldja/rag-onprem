@@ -49,6 +49,7 @@ export interface Me {
   display_name: string | null;
   is_admin: boolean;
   groups: GroupRef[];
+  auth_source: "local" | "ldap";
 }
 
 export interface Group extends GroupRef {
@@ -97,6 +98,8 @@ export interface User {
   disabled: boolean;
   group_ids: number[];
   created_at: string;
+  auth_source: "local" | "ldap";
+  last_login_at: string | null;
 }
 
 // ------------------------------------------------------------ endpoints

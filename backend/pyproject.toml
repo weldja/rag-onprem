@@ -22,6 +22,7 @@ dependencies = [
     "fastembed>=0.5",
     "pypdfium2>=4.30",
     "pillow>=10.1",
+    "ldap3>=2.9",
 ]
 
 [dependency-groups]
@@ -40,10 +41,11 @@ testpaths = ["tests"]
 pythonpath = ["."]
 # No test may open a network socket (Unix sockets are allowed for the asyncio
 # self-pipe). Integration tests opt in with @pytest.mark.enable_socket.
-addopts = "--disable-socket --allow-unix-socket -m 'not compose and not db'"
+addopts = "--disable-socket --allow-unix-socket -m 'not compose and not db and not ldap'"
 markers = [
     "compose: needs the running docker compose stack (scripts/e2e.sh)",
     "db: needs a Postgres test database (scripts/test-db.sh)",
+    "ldap: needs the OpenLDAP test server (scripts/test-ldap.sh)",
 ]
 
 [tool.ruff]
@@ -59,5 +61,5 @@ strict = true
 packages = ["app"]
 
 [[tool.mypy.overrides]]
-module = ["pgvector.*", "openpyxl.*", "onnxruntime.*", "fastembed.*", "pypdfium2.*"]
+module = ["pgvector.*", "openpyxl.*", "onnxruntime.*", "fastembed.*", "pypdfium2.*", "ldap3.*"]
 ignore_missing_imports = true

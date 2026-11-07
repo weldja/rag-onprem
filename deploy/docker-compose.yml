@@ -68,9 +68,14 @@ services:
   api:
     build: *backend-build
     image: rag-onprem/api:dev
+    # .env supplies optional settings such as LDAP_*; `environment` wins on overlap.
+    env_file:
+      - path: ../.env
+        required: false
     environment: *backend-env
     volumes:
       - uploads:/data/uploads
+      - ./certs:/etc/rag/certs:ro  # e.g. the directory's CA: LDAP_CA_FILE=/etc/rag/certs/ldap-ca.pem
     depends_on:
       db:
         condition: service_healthy

@@ -222,6 +222,22 @@ Milestone 5 (shipping):
   was avoided because it's GPL. Only PDF pages with fewer than `OCR_MIN_CHARS` characters of text
   layer are OCR'd. PNG, JPEG and TIFF uploads are OCR'd frame by frame. Chunks carry
   `metadata["ocr"]`. Tests build image-only documents in `tests/scanned.py`.
+- Directory sign-in (`app/auth/ldap.py`, `accounts.authenticate`):
+  - Search-then-bind with a service account.
+  - Empty passwords are refused before any bind. LDAP treats them as an anonymous bind and reports
+    success.
+  - User input is escaped with `escape_filter_chars`.
+  - TLS with certificate verification is mandatory unless `LDAP_ALLOW_PLAINTEXT` is set, for tests
+    only.
+  - Local accounts always use the local path, so there's a break-glass login when the directory is
+    down.
+  - Only app groups named in `LDAP_GROUP_MAP` are synced.
+  - **ldap3 is LGPL-3.0** (used unmodified). It's the one non-permissive dependency; the alternative
+    is python-ldap, which needs a C toolchain.
+  - Tests: ldap3 mock (`tests/test_ldap.py`), DB (`tests/db/test_directory_accounts.py`), and a
+    real OpenLDAP server over TLS (`bash scripts/test-ldap.sh`, which mints a fresh CA per run).
+  - api and worker read `.env` via `env_file`, so `LDAP_*` doesn't need listing in compose.
+    Single-quote values containing shell metacharacters.
 - Dev GPU: `DEV_GPU=1` in `.env` adds `deploy/docker-compose.gpu.yml` (NVIDIA) to the dev stack. With
   it, the 7B customer model runs on a 4 GB laptop GPU, partly offloaded (see `docs/eval-results.md`).
 - Release testing: install the bundle under `COMPOSE_PROJECT_NAME=<other>` with other ports. The
