@@ -214,6 +214,41 @@ def test_upload_index_reindex_ask_download_delete(admin: httpx.Client) -> None:
     assert admin.get(f"/api/documents/{doc_id}").status_code == 404
 
 
+def test_scanned_pdf_is_ocrd_and_answerable(admin: httpx.Client) -> None:
+    from tests.scanned import scanned_pdf
+
+    marker = uuid.uuid4().hex[:6]
+    name = f"scanned-notice-{marker}.pdf"
+    content = scanned_pdf(
+        [
+            [
+                "Notice to all staff",
+                f"Reference {marker}",
+                "The server room door code changes every quarter.",
+                "Ask the facilities manager for the current code.",
+            ]
+        ]
+    )
+    resp = admin.post("/api/documents", files={"file": (name, content)})
+    assert resp.status_code == 202, resp.text
+    doc_id = resp.json()["document"]["id"]
+    try:
+        doc = _wait_until_done(admin, doc_id)
+        assert doc["status"] == "ready", doc
+        body = admin.post(
+            "/api/ask",
+            json={
+                "question": "Who do I ask for the server room door code?",
+                "document_ids": [doc_id],
+            },
+        ).json()
+        assert body["found"] is True, body
+        assert "facilities manager" in body["answer"].lower(), body
+        assert body["sources"] and body["sources"][0]["page"] == 1, body
+    finally:
+        admin.delete(f"/api/documents/{doc_id}")
+
+
 # -------------------------------------------------------------------- ACLs
 
 

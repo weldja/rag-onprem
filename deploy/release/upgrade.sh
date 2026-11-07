@@ -49,7 +49,7 @@ while IFS= read -r line; do
 done <.env.example
 set_env RAG_VERSION "$new_version"
 # The models are baked into the images, so they follow the bundle.
-for key in LLM_MODEL EMBED_MODEL EMBED_DIM RERANKER_MODEL; do
+for key in LLM_MODEL EMBED_MODEL EMBED_DIM RERANKER_MODEL OCR_IMAGE_LANGUAGES; do
     set_env "$key" "$(sed -n "s/^${key}=//p" .env.example)"
 done
 

@@ -22,7 +22,13 @@ router = APIRouter(prefix="/api/documents", tags=["documents"])
 
 # Served inline (the browser shows them); everything else downloads. Never HTML:
 # an uploaded page rendered on our origin could run script as the viewer.
-_INLINE_TYPES = {"pdf": "application/pdf", "txt": "text/plain; charset=utf-8"}
+_INLINE_TYPES = {
+    "pdf": "application/pdf",
+    "txt": "text/plain; charset=utf-8",
+    "png": "image/png",
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+}
 
 
 class DocumentOut(BaseModel):

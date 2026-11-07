@@ -28,6 +28,15 @@ class Settings(BaseSettings):
     upload_dir: str = "/data/uploads"
     max_upload_mb: int = Field(default=50, gt=0)  # keep in step with nginx client_max_body_size
 
+    # OCR for scanned PDF pages and image files (Tesseract, in the image).
+    # OCR_LANGUAGES must be covered by the image's OCR_LANGUAGES build arg.
+    ocr_enabled: bool = True
+    ocr_languages: str = "eng"
+    ocr_dpi: int = Field(default=300, ge=72, le=600)
+    ocr_min_chars: int = Field(default=30, ge=0)
+    ocr_max_pages: int = Field(default=300, gt=0)
+    ocr_timeout_s: float = Field(default=120.0, gt=0)
+
     # Worker
     worker_poll_s: float = Field(default=2.0, gt=0)
     job_stale_after_s: float = Field(default=1800.0, gt=0)

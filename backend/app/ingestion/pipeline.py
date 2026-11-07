@@ -15,6 +15,7 @@ from app.core.config import Settings
 from app.db.tables import chunks, documents
 from app.ingestion.chunking import Document, RecursiveTextSplitter
 from app.ingestion.loaders import LoadError, is_toc_chunk, load_file
+from app.ingestion.ocr import OcrOptions
 from app.llm.base import Embedder
 
 log = logging.getLogger(__name__)
@@ -33,6 +34,17 @@ def split(pieces: list[Document], settings: Settings) -> list[Document]:
         else:
             out.extend(splitter.split_documents([piece]))
     return [c for c in out if not is_toc_chunk(c.page_content, c.metadata.get("page"))]
+
+
+def ocr_options(settings: Settings) -> OcrOptions:
+    return OcrOptions(
+        enabled=settings.ocr_enabled,
+        languages=settings.ocr_languages,
+        dpi=settings.ocr_dpi,
+        min_chars=settings.ocr_min_chars,
+        max_pages=settings.ocr_max_pages,
+        timeout_s=settings.ocr_timeout_s,
+    )
 
 
 def set_status(engine: Engine, doc_id: int, status: str, error: str | None = None) -> None:
@@ -65,13 +77,16 @@ def process_document(engine: Engine, doc_id: int, *, embedder: Embedder, setting
             Path(row.storage_path),
             row.content_type or Path(row.filename).suffix,
             sheet_chunk_chars=settings.sheet_chunk_chars,
+            ocr=ocr_options(settings),
         )
     except LoadError as exc:
         raise IngestError(str(exc)) from exc
     if not loaded.pages:
-        raise IngestError(
-            f"{row.filename} has no extractable text (scanned PDFs need OCR, planned for later)"
-        )
+        hint = "even after OCR" if settings.ocr_enabled else "(OCR is disabled)"
+        raise IngestError(f"{row.filename} has no readable text {hint}")
+    ocr_pages = sum(1 for p in loaded.pages if p.metadata.get("ocr"))
+    if ocr_pages:
+        log.info("Document %d: %d page(s) read with OCR", doc_id, ocr_pages)
 
     pieces = split(loaded.pages, settings)
     if not pieces:

@@ -119,7 +119,7 @@ export default function Documents({
           ref={fileInput}
           type="file"
           multiple
-          accept=".pdf,.docx,.pptx,.xlsx,.csv,.html,.htm,.txt,.md"
+          accept=".pdf,.docx,.pptx,.xlsx,.csv,.html,.htm,.txt,.md,.png,.jpg,.jpeg,.tif,.tiff"
           aria-label="Files to upload"
         />
         <div>

@@ -40,7 +40,9 @@ out="release/rag-onprem-$VERSION"
 echo "==> Building rag-onprem $VERSION ($commit)"
 echo "    LLM=$LLM_MODEL  embeddings=$EMBED_MODEL ($EMBED_DIM)  reranker=${RERANKER_MODEL:-none}"
 
+OCR_IMAGE_LANGUAGES="${RELEASE_OCR_LANGUAGES:-$(from_example OCR_IMAGE_LANGUAGES)}"
 docker build --target runtime --build-arg "RERANKER_MODEL=$RERANKER_MODEL" \
+    --build-arg "OCR_LANGUAGES=$OCR_IMAGE_LANGUAGES" \
     -t "rag-onprem/api:$VERSION" "$(native_path backend)"
 docker build -t "rag-onprem/web:$VERSION" "$(native_path frontend)"
 docker build --build-arg "LLM_MODEL=$LLM_MODEL" --build-arg "EMBED_MODEL=$EMBED_MODEL" \
@@ -72,6 +74,7 @@ sed -e "s|^LLM_MODEL=.*|LLM_MODEL=$LLM_MODEL|" \
     echo "llm_model=$LLM_MODEL"
     echo "embed_model=$EMBED_MODEL"
     echo "reranker_model=${RERANKER_MODEL:-}"
+    echo "ocr_languages=${OCR_IMAGE_LANGUAGES}"
     echo "pgvector=$PGVECTOR_IMAGE"
     for name in api web ollama pgvector; do
         echo "image.$name=$(docker image inspect --format '{{.Id}}' "rag-onprem/$name:$VERSION")"

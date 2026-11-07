@@ -51,10 +51,16 @@ Configuration lives in `.env`, which is readable only by its owner. After changi
 
 ## 3. Daily use
 
-- **Documents:** upload PDF, Word, PowerPoint, Excel, CSV, HTML, text or Markdown files.
+- **Documents:** upload PDF, Word, PowerPoint, Excel, CSV, HTML, text or Markdown files, and
+  scanned images (PNG, JPEG, TIFF).
   - Each document is visible only to its uploader, administrators, and the groups it's shared with.
   - Indexing runs in the background, and the status column shows progress.
-  - Scanned PDFs (images of text) aren't supported yet.
+  - Scanned PDF pages and images are read with OCR on this server. Scanned documents take longer to
+    index, roughly a few seconds per page. Clean scans at 300 dpi read best; photos of paper and
+    handwriting may read poorly.
+  - OCR reads English by default. For other languages, set `OCR_LANGUAGES` in `.env`, for example
+    `eng+deu`. The bundle must include those languages; check `ocr_languages` in `VERSION` and ask
+    for a bundle built with them if they're missing.
 - **Users and groups:** managed under **Admin**.
   - New users join **All staff** by default.
   - Removing someone from a group takes effect immediately.
@@ -137,7 +143,7 @@ If a release changes the embedding model, documents need re-indexing. They're sh
 | Not healthy after 15 minutes | `docker compose logs ollama api`. Most often there isn't enough RAM for the model. |
 | Browser certificate warning | You're using the self-signed certificate. Install a real one in `certs/` and run `docker compose restart proxy`. |
 | Document stuck in "pending" | `docker compose logs worker` |
-| A document shows "failed" | The error is shown next to it. Often the PDF is scanned, encrypted or damaged. |
+| A document shows "failed" | The error is shown next to it. Often the PDF is encrypted or damaged, or the scan is too poor to read. |
 | Answers are slow | Normal without a GPU. Check that `docker compose ps` shows no restarts and the server isn't swapping. |
 | "The local model is unavailable" | `docker compose restart ollama`, then wait for it to become healthy. |
 

@@ -18,6 +18,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     ORT_DISABLE_TELEMETRY=1 \
     DO_NOT_TRACK=1
 WORKDIR /app
+
+# OCR engine and language packs, installed at build time (Apache-2.0).
+# Tesseract language codes, space-separated, e.g. "eng deu fra".
+ARG OCR_LANGUAGES="eng"
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends tesseract-ocr \
+        $(for l in $OCR_LANGUAGES; do printf 'tesseract-ocr-%s ' "$l"; done) \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY pyproject.toml uv.lock ./
 
 # --- runtime image ---

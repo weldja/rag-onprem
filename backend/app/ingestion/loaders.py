@@ -1,7 +1,8 @@
 """Document loaders: file -> list of Documents with page/section metadata.
 
 Metadata keys:
-  page         1-based page (PDF) or slide (PPTX) number
+  page         1-based page (PDF, image frame) or slide (PPTX) number
+  ocr          True if the text came from OCR (scanned page or image)
   section      heading (DOCX), sheet name and row range (XLSX/CSV)
   pre_chunked  True if the loader already produced chunk-sized pieces (spreadsheets),
                so the splitter must leave them alone
@@ -12,6 +13,7 @@ _load_spreadsheet, without the pandas dependency.
 
 import csv
 import datetime as dt
+import logging
 import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
@@ -22,8 +24,14 @@ from pypdf import PdfReader
 from pypdf.errors import PdfReadError
 
 from app.ingestion.chunking import Document
+from app.ingestion.ocr import OcrError, OcrOptions, image_frames, ocr_image, render_pdf_page
 
-SUPPORTED_EXTENSIONS = frozenset({"pdf", "docx", "pptx", "xlsx", "csv", "html", "htm", "txt", "md"})
+log = logging.getLogger(__name__)
+
+IMAGE_EXTENSIONS = frozenset({"png", "jpg", "jpeg", "tif", "tiff"})
+SUPPORTED_EXTENSIONS = (
+    frozenset({"pdf", "docx", "pptx", "xlsx", "csv", "html", "htm", "txt", "md"}) | IMAGE_EXTENSIONS
+)
 
 SHEET_MAX_ROWS_PER_CHUNK = 25
 
@@ -46,19 +54,55 @@ def _clean(text: str) -> str:
 # --------------------------------------------------------------------------- PDF
 
 
-def load_pdf(path: Path) -> LoadedDocument:
+def load_pdf(path: Path, ocr: OcrOptions | None = None) -> LoadedDocument:
+    """Text layer per page. Pages with (almost) no text layer, i.e. scans, are
+    OCR'd when `ocr` is enabled, up to ocr.max_pages per document."""
     try:
         reader = PdfReader(str(path))
         if reader.is_encrypted:
             raise LoadError(f"{path.name} is encrypted")
         pages: list[Document] = []
+        ocr_done = 0
         for number, page in enumerate(reader.pages, start=1):
             text = _clean(page.extract_text() or "")
+            meta: dict[str, Any] = {"page": number}
+            if ocr is not None and ocr.enabled and len(text) < ocr.min_chars:
+                if ocr_done < ocr.max_pages:
+                    scanned = _clean(ocr_image(render_pdf_page(path, number - 1, ocr.dpi), ocr))
+                    if len(scanned) > len(text):
+                        text, meta["ocr"] = scanned, True
+                elif ocr_done == ocr.max_pages:
+                    log.warning("%s: OCR limit of %d pages reached", path.name, ocr.max_pages)
+                ocr_done += 1
             if text:
-                pages.append(Document(page_content=text, metadata={"page": number}))
+                pages.append(Document(page_content=text, metadata=meta))
         return LoadedDocument(pages=pages, page_count=len(reader.pages))
     except PdfReadError as exc:
         raise LoadError(f"{path.name} is not a readable PDF: {exc}") from exc
+    except OcrError as exc:
+        raise LoadError(f"{path.name}: {exc}") from exc
+
+
+# ------------------------------------------------------------------------ images
+
+
+def load_image(path: Path, ocr: OcrOptions | None) -> LoadedDocument:
+    """Photos and scans (PNG, JPEG, TIFF): OCR every frame, one page per frame."""
+    if ocr is None or not ocr.enabled:
+        raise LoadError(f"{path.name} is an image; OCR is disabled so it can't be read")
+    try:
+        frames = image_frames(path)
+    except Exception as exc:  # Pillow raises several unrelated types
+        raise LoadError(f"{path.name} is not a readable image: {exc}") from exc
+    pages: list[Document] = []
+    try:
+        for number, frame in enumerate(frames[: ocr.max_pages], start=1):
+            text = _clean(ocr_image(frame, ocr))
+            if text:
+                pages.append(Document(page_content=text, metadata={"page": number, "ocr": True}))
+    except OcrError as exc:
+        raise LoadError(f"{path.name}: {exc}") from exc
+    return LoadedDocument(pages=pages, page_count=len(frames))
 
 
 # -------------------------------------------------------------------------- DOCX
@@ -324,10 +368,14 @@ def load_text(path: Path) -> LoadedDocument:
 # ------------------------------------------------------------------------ dispatch
 
 
-def load_file(path: Path, ext: str, *, sheet_chunk_chars: int = 1800) -> LoadedDocument:
+def load_file(
+    path: Path, ext: str, *, sheet_chunk_chars: int = 1800, ocr: OcrOptions | None = None
+) -> LoadedDocument:
     ext = ext.lower().lstrip(".")
     if ext == "pdf":
-        return load_pdf(path)
+        return load_pdf(path, ocr)
+    if ext in IMAGE_EXTENSIONS:
+        return load_image(path, ocr)
     if ext == "docx":
         return load_docx(path)
     if ext == "pptx":

@@ -217,6 +217,11 @@ Milestone 5 (shipping):
   any operational change.
 - Every base image is pinned by digest (Dockerfiles, `deploy/docker-compose.yml`,
   `scripts/make-dev-cert.sh`). Update pins deliberately (see the operations.md appendix).
+- OCR (`app/ingestion/ocr.py`): Tesseract, installed in the image via apt with language packs from the
+  `OCR_LANGUAGES` build arg (`OCR_IMAGE_LANGUAGES` in `.env`), and pypdfium2 for rendering. Poppler
+  was avoided because it's GPL. Only PDF pages with fewer than `OCR_MIN_CHARS` characters of text
+  layer are OCR'd. PNG, JPEG and TIFF uploads are OCR'd frame by frame. Chunks carry
+  `metadata["ocr"]`. Tests build image-only documents in `tests/scanned.py`.
 - Dev GPU: `DEV_GPU=1` in `.env` adds `deploy/docker-compose.gpu.yml` (NVIDIA) to the dev stack. With
   it, the 7B customer model runs on a 4 GB laptop GPU, partly offloaded (see `docs/eval-results.md`).
 - Release testing: install the bundle under `COMPOSE_PROJECT_NAME=<other>` with other ports. The

@@ -20,6 +20,8 @@ x-backend-env: &backend-env
   MIN_SIMILARITY: ${MIN_SIMILARITY:-0.35}
   RERANKER_MODEL: ${RERANKER_MODEL:-}
   RERANK_MIN_SCORE: ${RERANK_MIN_SCORE:-}
+  OCR_ENABLED: ${OCR_ENABLED:-true}
+  OCR_LANGUAGES: ${OCR_LANGUAGES:-eng}
   UPLOAD_DIR: /data/uploads
   LOG_LEVEL: ${LOG_LEVEL:-INFO}
 
@@ -28,6 +30,7 @@ x-backend-build: &backend-build
   target: runtime
   args:
     RERANKER_MODEL: ${RERANKER_MODEL:-}
+    OCR_LANGUAGES: ${OCR_IMAGE_LANGUAGES:-eng}
 
 services:
   db:
