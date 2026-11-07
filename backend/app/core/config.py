@@ -42,6 +42,15 @@ class Settings(BaseSettings):
     # How long the API waits at startup for its models to appear in Ollama.
     startup_wait_s: float = Field(default=120.0, ge=0)
 
+    # Auth
+    cookie_secure: bool = True  # False only for plain-HTTP local testing
+    session_idle_hours: float = Field(default=12.0, gt=0)
+    session_max_days: float = Field(default=7.0, gt=0)
+    login_max_failures: int = Field(default=5, gt=0)
+    login_lockout_minutes: float = Field(default=5.0, gt=0)
+    password_min_length: int = Field(default=12, ge=8)
+    default_group: str = "All staff"
+
     log_level: str = "INFO"
 
 

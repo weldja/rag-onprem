@@ -95,13 +95,19 @@ services:
     restart: unless-stopped
 
   proxy:
-    # Minimal reverse proxy so the api can stay on the internal network.
-    # Milestone 3 extends this with the frontend and TLS.
-    image: nginx:1.27-alpine
+    # nginx serving the built frontend, terminating TLS and proxying /api, so
+    # the api can stay on the internal network. The only published ports.
+    build:
+      context: ../frontend
+    image: rag-onprem/web:dev
+    environment:
+      HTTPS_PORT: ${HTTPS_PORT:-443}  # used in the HTTP -> HTTPS redirect
     volumes:
-      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/templates:/etc/nginx/templates:ro
+      - ./certs:/etc/nginx/certs:ro
     ports:
-      - "${HTTP_BIND:-127.0.0.1}:${HTTP_PORT:-8000}:80"
+      - "${HTTP_BIND:-0.0.0.0}:${HTTP_PORT:-80}:80"
+      - "${HTTP_BIND:-0.0.0.0}:${HTTPS_PORT:-443}:443"
     depends_on:
       api:
         condition: service_healthy

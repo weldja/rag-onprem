@@ -10,6 +10,8 @@ import logging
 import sys
 from pathlib import Path
 
+from app.auth import accounts
+from app.auth.acl import Viewer
 from app.core.config import get_settings
 from app.db.engine import get_engine
 from app.ingestion import registry, storage
@@ -17,13 +19,24 @@ from app.ingestion.loaders import SUPPORTED_EXTENSIONS
 from app.ingestion.pipeline import IngestError, process_document, set_status
 from app.llm.ollama import OllamaClient, OllamaError
 
+# The CLI runs with server-side access (it's executed inside the container).
+SYSTEM = Viewer(id=0, username="system", is_admin=True)
+
 
 def main(argv: list[str] | None = None) -> int:
+    settings = get_settings()
     parser = argparse.ArgumentParser(description="Ingest documents into the RAG index.")
     parser.add_argument("paths", nargs="+", type=Path)
+    parser.add_argument(
+        "--group",
+        action="append",
+        dest="groups",
+        help=f"share with this group (repeatable; default: '{settings.default_group}'). "
+        "Use --group '' for admins only.",
+    )
     args = parser.parse_args(argv)
+    group_names = [g for g in (args.groups or [settings.default_group]) if g]
 
-    settings = get_settings()
     logging.basicConfig(level=settings.log_level, format="%(levelname)s %(name)s: %(message)s")
     client = OllamaClient(
         settings.ollama_url,
@@ -33,6 +46,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     engine = get_engine()
     max_bytes = settings.max_upload_mb * 1024 * 1024
+    try:
+        group_ids = accounts.group_ids_by_name(engine, group_names) if group_names else []
+    except accounts.AccountError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
 
     failures = 0
     for path in args.paths:
@@ -55,7 +73,7 @@ def main(argv: list[str] | None = None) -> int:
         existing = registry.find_by_sha(engine, received.sha256)
         if existing is not None:
             storage.discard(received.path)
-            doc = registry.get_document(engine, existing, settings.embed_model)
+            doc = registry.get_document(engine, existing, settings.embed_model, SYSTEM)
             if doc.status == "ready":
                 print(f"SKIPPED {path.name}: already ingested (document {existing})")
                 continue
@@ -70,6 +88,7 @@ def main(argv: list[str] | None = None) -> int:
                 size=received.size,
                 storage_path=str(target),
                 enqueue=False,
+                group_ids=group_ids,
             )
         try:
             n = process_document(engine, doc_id, embedder=client, settings=settings)

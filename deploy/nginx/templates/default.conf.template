@@ -1,0 +1,64 @@
+# Rendered by the nginx image at start-up (envsubst on ${HTTPS_PORT} only;
+# nginx's own $variables are left alone).
+
+server {
+    listen 80;
+    server_name _;
+    server_tokens off;
+    return 301 https://$host:${HTTPS_PORT}$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name _;
+    server_tokens off;
+
+    # Customer-supplied certificate (deploy/certs/tls.crt + tls.key).
+    # scripts/make-dev-cert.sh creates a self-signed pair for development.
+    ssl_certificate     /etc/nginx/certs/tls.crt;
+    ssl_certificate_key /etc/nginx/certs/tls.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_tickets off;
+
+    client_max_body_size 50m;
+
+    # Everything is served from this origin; nothing may load from elsewhere.
+    # Defined at server level only: an add_header inside a location would
+    # silently drop these.
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "no-referrer" always;
+    add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
+    # Uncomment once a real (non-self-signed) certificate is installed:
+    # add_header Strict-Transport-Security "max-age=31536000" always;
+
+    root /usr/share/nginx/html;
+
+    location /api/ {
+        proxy_pass http://api:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        # Must exceed the API's LLM timeout (LLM_TIMEOUT_S, default 600s);
+        # CPU-only answers can take minutes.
+        proxy_read_timeout 900s;
+        # Stream answers (server-sent events) without buffering.
+        proxy_buffering off;
+    }
+
+    location /assets/ {
+        # Vite gives these content-hashed names, so they can be cached for good.
+        expires 1y;
+        try_files $uri =404;
+    }
+
+    location / {
+        expires -1;
+        try_files $uri /index.html;
+    }
+}

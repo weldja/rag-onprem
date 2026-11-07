@@ -72,7 +72,7 @@ browser ──HTTPS──> nginx ──> api (FastAPI) ──> postgres+pgvector
 - **Store embedding model name and dimension alongside each vector.** Changing the embedding model means
   re-indexing. Never mix vectors from different models in one index.
 
-### Layout (`frontend/` and `deploy/offline-bundle/` not created yet)
+### Layout (`deploy/offline-bundle/` not created yet)
 
 ```
 backend/
@@ -138,9 +138,12 @@ bash scripts/dev-up.sh                  # build + start stack (creates .env on f
 bash scripts/dev-down.sh [-v]           # stop (-v also deletes the database volume)
 bash scripts/test.sh                    # ruff + mypy + pytest in the dev image with --network none
 bash scripts/test.sh -k citations       # extra args go to pytest
-bash scripts/ingest.sh samples/sample.pdf
-bash scripts/ask.sh "How many days of leave can I carry over?"
-bash scripts/e2e.sh                     # ingest the sample, then run the compose-marked tests against the live stack
+bash scripts/test-db.sh                 # DB tests (ACLs, sessions, queue) against a throwaway rag_test database
+bash scripts/create-admin.sh alice      # first administrator (hidden password prompt)
+bash scripts/ingest.sh samples/sample.pdf   # CLI ingest, shared with "All staff" (--group to change)
+RAG_USER=alice RAG_PASSWORD=... bash scripts/ask.sh "How many days of leave can I carry over?"
+bash scripts/e2e.sh                     # DB tests + ingest sample + HTTPS end-to-end tests (as e2e-admin)
+bash scripts/make-dev-cert.sh           # self-signed cert for dev (dev-up.sh runs it if missing)
 bash scripts/egress-check.sh            # api/ollama/db must NOT reach the internet
 ```
 
@@ -165,10 +168,25 @@ Milestones 1–2 of `docs/build-plan.md` are implemented:
 - API: `GET /api/health`, `POST /api/ask`, `POST /api/ask/stream` (SSE: status/token/done/error; `done`
   carries the authoritative answer and sources), `POST|GET /api/documents`, `GET|DELETE /api/documents/{id}`,
   `POST /api/documents/{id}/reindex`.
-- nginx (`proxy`) is the only service with a published port; api, worker, db and ollama sit on an
-  `internal: true` network.
+- nginx (`proxy`, built from `frontend/`) serves the React app, terminates TLS (`deploy/certs/`) and
+  proxies `/api`. It's the only service with published ports; api, worker, db and ollama sit on an
+  `internal: true` network. CSP is `'self'` only; the nginx config is
+  `deploy/nginx/templates/default.conf.template`.
 
-Not yet: frontend, auth/ACLs (milestone 3). Until ACLs exist, every user can see every document.
+Milestone 3 (auth and access control):
+- Local accounts (argon2id), server-side sessions in Postgres (HttpOnly/SameSite=Strict/Secure cookie,
+  only the token's SHA-256 is stored), lockout after repeated failures. First admin:
+  `bash scripts/create-admin.sh USERNAME`. There's no default account.
+- **Visibility rule** (`app/auth/acl.py`): admin, OR uploader, OR the document shares a group with the
+  user. `can_see(viewer)` goes in the WHERE clause of every document or chunk query. Never filter
+  results in Python. New retrieval or listing code must take a `Viewer` and have a DB test in
+  `backend/tests/db/test_acl.py`.
+- Every non-GET `/api/` request needs `X-Requested-With: rag-onprem` (CSRF guard in `app/main.py`).
+- Migration 0003 put pre-existing documents in the "All staff" group; new users join it by default.
+- Uploaded files are served as attachments except PDF/TXT, never as inline HTML.
+
+Tests: `scripts/test.sh` (unit, offline), `scripts/test-db.sh` (real Postgres, `rag_test` DB),
+`scripts/e2e.sh` (runs both DB and HTTPS end-to-end tests).
 
 ## Working conventions
 

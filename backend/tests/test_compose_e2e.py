@@ -1,48 +1,110 @@
-"""End-to-end checks against the running stack. Run via scripts/e2e.sh, which
-ingests samples/sample.pdf first and runs this inside the compose `edge` network."""
+"""End-to-end checks against the running stack, over HTTPS through nginx.
+Run via scripts/e2e.sh, which ingests samples/sample.pdf (shared with
+"All staff"), resets the e2e-admin password, and runs this inside the compose
+`edge` network."""
 
 import io
 import json
 import os
 import time
 import uuid
+from collections.abc import Iterator
+from contextlib import closing
+from typing import Any
 
 import httpx
 import pytest
 
 pytestmark = [pytest.mark.compose, pytest.mark.enable_socket]
 
-BASE = os.environ.get("RAG_BASE_URL", "http://127.0.0.1:8000")
+BASE = os.environ.get("RAG_BASE_URL", "https://127.0.0.1:8443")
 TIMEOUT = 900.0  # CPU-only answers can be slow
+CSRF = {"X-Requested-With": "rag-onprem"}
+USER_PASSWORD = "e2e-user-password-123"
 
 
-def test_health() -> None:
-    resp = httpx.get(f"{BASE}/api/health", timeout=10)
+def _client() -> httpx.Client:
+    # Dev certificate is self-signed.
+    return httpx.Client(base_url=BASE, headers=CSRF, verify=False, timeout=TIMEOUT)
+
+
+def _login(username: str, password: str) -> httpx.Client:
+    client = _client()
+    resp = client.post("/api/auth/login", json={"username": username, "password": password})
     assert resp.status_code == 200, resp.text
-    assert resp.json()["status"] == "ok"
+    return client
 
 
-def test_answer_cites_the_right_page() -> None:
-    resp = httpx.post(
-        f"{BASE}/api/ask",
-        json={"question": "How many unused days of annual leave can I carry over?"},
-        timeout=TIMEOUT,
-    )
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
+@pytest.fixture(scope="module")
+def admin() -> Iterator[httpx.Client]:
+    client = _login(os.environ["RAG_ADMIN_USER"], os.environ["RAG_ADMIN_PASSWORD"])
+    yield client
+    client.close()
+
+
+def _wait_until_done(client: httpx.Client, doc_id: int) -> dict[str, Any]:
+    deadline = time.monotonic() + 300
+    while True:
+        doc: dict[str, Any] = client.get(f"/api/documents/{doc_id}").json()
+        if doc["status"] in ("ready", "failed") or time.monotonic() > deadline:
+            return doc
+        time.sleep(2)
+
+
+def _docx(heading: str, text: str) -> bytes:
+    import docx
+
+    d = docx.Document()
+    d.add_heading(heading, level=1)
+    d.add_paragraph(text)
+    buf = io.BytesIO()
+    d.save(buf)
+    return buf.getvalue()
+
+
+# ------------------------------------------------------------------ basics
+
+
+def test_health_and_frontend() -> None:
+    with _client() as client:
+        assert client.get("/api/health").json()["status"] == "ok"
+        page = client.get("/")
+        assert page.status_code == 200 and '<div id="root">' in page.text
+        csp = page.headers["content-security-policy"]
+        assert "default-src 'self'" in csp and "frame-ancestors 'none'" in csp
+
+
+def test_http_redirects_to_https() -> None:
+    resp = httpx.get(BASE.replace("https://", "http://") + "/", follow_redirects=False)
+    assert resp.status_code == 301
+    assert resp.headers["location"].startswith("https://")
+
+
+def test_api_requires_sign_in() -> None:
+    with _client() as client:
+        assert client.post("/api/ask", json={"question": "q"}).status_code == 401
+        bad = client.post("/api/auth/login", json={"username": "nobody", "password": "nope"})
+        assert bad.status_code == 401
+
+
+# ------------------------------------------------------------------ answers
+
+
+def test_answer_cites_the_right_page(admin: httpx.Client) -> None:
+    body = admin.post(
+        "/api/ask", json={"question": "How many unused days of annual leave can I carry over?"}
+    ).json()
     assert body["found"] is True, body
     assert "5" in body["answer"]
-    assert body["sources"], "answer has no citations"
     assert any(s["document"] == "sample.pdf" and s["page"] == 2 for s in body["sources"]), body
 
 
-def test_stream_ends_with_cited_done_event() -> None:
-    events: list[tuple[str, dict[str, object]]] = []
-    with httpx.stream(
+def test_stream_ends_with_cited_done_event(admin: httpx.Client) -> None:
+    events: list[tuple[str, dict[str, Any]]] = []
+    with admin.stream(
         "POST",
-        f"{BASE}/api/ask/stream",
+        "/api/ask/stream",
         json={"question": "What is the mileage rate for the first 10,000 miles?"},
-        timeout=TIMEOUT,
     ) as resp:
         assert resp.status_code == 200
         name = ""
@@ -56,75 +118,110 @@ def test_stream_ends_with_cited_done_event() -> None:
     assert kinds[-1] == "done", events[-1]
     done = events[-1][1]
     assert done["found"] is True
-    assert any(s["page"] == 3 for s in done["sources"])  # type: ignore[union-attr]
+    assert any(s["page"] == 3 for s in done["sources"])
 
 
-def test_upload_index_ask_delete_docx() -> None:
-    """Full lifecycle through the API and the worker, with a DOCX."""
-    import docx
+def test_off_topic_question_is_not_found(admin: httpx.Client) -> None:
+    body = admin.post("/api/ask", json={"question": "What is the capital of Peru?"}).json()
+    assert body["found"] is False, body
 
+
+# -------------------------------------------------------------- lifecycle
+
+
+def test_upload_index_reindex_ask_download_delete(admin: httpx.Client) -> None:
     marker = uuid.uuid4().hex[:8]  # unique content, so it is never a duplicate
-    d = docx.Document()
-    d.add_heading("Parking policy", level=1)
-    d.add_paragraph(
-        f"Staff parking permits (reference PK-{marker}) cost 12 pounds per month "
-        "and are issued by reception."
-    )
-    buf = io.BytesIO()
-    d.save(buf)
     name = f"parking-{marker}.docx"
-
-    resp = httpx.post(
-        f"{BASE}/api/documents",
-        files={"file": (name, buf.getvalue(), "application/octet-stream")},
-        timeout=60,
+    content = _docx(
+        "Parking policy",
+        f"Staff parking permits (reference PK-{marker}) cost 12 pounds per month "
+        "and are issued by reception.",
     )
+    resp = admin.post("/api/documents", files={"file": (name, content)})
     assert resp.status_code == 202, resp.text
     doc_id = resp.json()["document"]["id"]
-
-    def wait_until_done() -> dict[str, object]:
-        deadline = time.monotonic() + 300
-        while True:
-            doc: dict[str, object] = httpx.get(f"{BASE}/api/documents/{doc_id}", timeout=10).json()
-            if doc["status"] in ("ready", "failed") or time.monotonic() > deadline:
-                return doc
-            time.sleep(2)
-
     try:
-        doc = wait_until_done()
+        doc = _wait_until_done(admin, doc_id)
         assert doc["status"] == "ready", doc
-        assert doc["chunks"] >= 1 and doc["stale"] is False
+        assert doc["chunks"] >= 1 and doc["stale"] is False and doc["group_ids"] == []
 
-        reindex = httpx.post(f"{BASE}/api/documents/{doc_id}/reindex", timeout=10)
-        assert reindex.status_code == 202, reindex.text
-        redone = wait_until_done()
-        assert redone["status"] == "ready", redone
-        assert redone["chunks"] == doc["chunks"]
+        assert admin.post(f"/api/documents/{doc_id}/reindex").status_code == 202
+        redone = _wait_until_done(admin, doc_id)
+        assert redone["status"] == "ready" and redone["chunks"] == doc["chunks"]
 
-        again = httpx.post(
-            f"{BASE}/api/documents",
-            files={"file": (name, buf.getvalue(), "application/octet-stream")},
-            timeout=60,
-        )
+        again = admin.post("/api/documents", files={"file": (name, content)})
         assert again.status_code == 200 and again.json()["duplicate"] is True
 
-        body = httpx.post(
-            f"{BASE}/api/ask",
-            json={"question": "How much does a staff parking permit cost per month?"},
-            timeout=TIMEOUT,
+        body = admin.post(
+            "/api/ask", json={"question": "How much does a staff parking permit cost per month?"}
         ).json()
         assert body["found"] is True, body
         assert any(
             s["document"] == name and s["section"] == "Parking policy" for s in body["sources"]
         ), body
+
+        download = admin.get(f"/api/documents/{doc_id}/file")
+        assert download.status_code == 200 and download.content == content
+        assert download.headers["content-disposition"].startswith("attachment")
     finally:
-        assert httpx.delete(f"{BASE}/api/documents/{doc_id}", timeout=10).status_code == 204
-    assert httpx.get(f"{BASE}/api/documents/{doc_id}", timeout=10).status_code == 404
+        assert admin.delete(f"/api/documents/{doc_id}").status_code == 204
+    assert admin.get(f"/api/documents/{doc_id}").status_code == 404
 
 
-def test_off_topic_question_is_not_found() -> None:
-    resp = httpx.post(
-        f"{BASE}/api/ask", json={"question": "What is the capital of Peru?"}, timeout=TIMEOUT
+# -------------------------------------------------------------------- ACLs
+
+
+def test_groups_isolate_documents(admin: httpx.Client) -> None:
+    """A document shared with one group is invisible, in answers and listings,
+    to a user outside that group."""
+    marker = uuid.uuid4().hex[:8]
+    group = admin.post("/api/admin/groups", json={"name": f"Legal {marker}"}).json()
+    insider = admin.post(
+        "/api/admin/users",
+        json={"username": f"in-{marker}", "password": USER_PASSWORD, "group_ids": [group["id"]]},
+    ).json()
+    outsider = admin.post(
+        "/api/admin/users",
+        json={"username": f"out-{marker}", "password": USER_PASSWORD, "group_ids": []},
+    ).json()
+    name = f"settlement-{marker}.docx"
+    upload = admin.post(
+        "/api/documents",
+        files={
+            "file": (
+                name,
+                _docx(
+                    "Settlement terms",
+                    f"The Orion settlement (case {marker}) pays 48,000 pounds "
+                    "in three instalments.",
+                ),
+            )
+        },
+        data={"group_ids": [str(group["id"])]},
     )
-    assert resp.status_code == 200, resp.text
-    assert resp.json()["found"] is False, resp.json()
+    assert upload.status_code == 202, upload.text
+    doc_id = upload.json()["document"]["id"]
+    question = {"question": "How much does the Orion settlement pay?"}
+    try:
+        assert _wait_until_done(admin, doc_id)["status"] == "ready"
+
+        with closing(_login(insider["username"], USER_PASSWORD)) as alice:
+            body = alice.post("/api/ask", json=question).json()
+            assert body["found"] is True, body
+            assert any(s["document"] == name for s in body["sources"]), body
+            assert alice.get(f"/api/documents/{doc_id}").status_code == 200
+
+        with closing(_login(outsider["username"], USER_PASSWORD)) as bob:
+            body = bob.post("/api/ask", json=question).json()
+            assert all(s["document"] != name for s in body["sources"]), body
+            assert "48,000" not in body["answer"], body
+            assert doc_id not in [d["id"] for d in bob.get("/api/documents").json()]
+            assert bob.get(f"/api/documents/{doc_id}").status_code == 404
+            assert bob.get(f"/api/documents/{doc_id}/file").status_code == 404
+            assert bob.delete(f"/api/documents/{doc_id}").status_code == 404
+            assert bob.get("/api/admin/users").status_code == 403
+    finally:
+        admin.delete(f"/api/documents/{doc_id}")
+        for user in (insider, outsider):
+            admin.delete(f"/api/admin/users/{user['id']}")
+        admin.delete(f"/api/admin/groups/{group['id']}")

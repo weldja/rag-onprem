@@ -18,6 +18,7 @@ dependencies = [
     "python-pptx>=1.0",
     "openpyxl>=3.1",
     "beautifulsoup4>=4.12",
+    "argon2-cffi>=23.1",
 ]
 
 [dependency-groups]
@@ -36,9 +37,10 @@ testpaths = ["tests"]
 pythonpath = ["."]
 # No test may open a network socket (Unix sockets are allowed for the asyncio
 # self-pipe). Integration tests opt in with @pytest.mark.enable_socket.
-addopts = "--disable-socket --allow-unix-socket -m 'not compose'"
+addopts = "--disable-socket --allow-unix-socket -m 'not compose and not db'"
 markers = [
     "compose: needs the running docker compose stack (scripts/e2e.sh)",
+    "db: needs a Postgres test database (scripts/test-db.sh)",
 ]
 
 [tool.ruff]

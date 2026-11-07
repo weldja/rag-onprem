@@ -4,16 +4,25 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.api import deps
-from app.main import app
+from app.auth.acl import Viewer
+from app.main import CSRF_HEADER, CSRF_VALUE, app
 from app.retrieval.search import RetrievedChunk
 from tests.fakes import FakeEmbedder, FakeLLM, chunk, fixed_retriever
 
+ALICE = Viewer(id=7, username="alice", is_admin=False)
+
 
 @pytest.fixture
-def client() -> Iterator[TestClient]:
+def anon() -> Iterator[TestClient]:
     # No `with TestClient(...)`: that would run the startup model check.
-    yield TestClient(app)
+    yield TestClient(app, headers={CSRF_HEADER: CSRF_VALUE})
     app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def client(anon: TestClient) -> TestClient:
+    app.dependency_overrides[deps.get_current_user] = lambda: ALICE
+    return anon
 
 
 def override(reply: str, hits: list[RetrievedChunk], *, fail: bool = False) -> FakeLLM:
@@ -81,6 +90,25 @@ def test_upload_rejects_unsupported_type(client: TestClient) -> None:
     assert ".pdf" in resp.json()["detail"]
 
 
-def test_swagger_ui_disabled(client: TestClient) -> None:
+def test_requests_without_a_session_are_rejected(anon: TestClient) -> None:
+    # The real get_current_user runs and finds no cookie; no database needed.
+    assert anon.post("/api/ask", json={"question": "q"}).status_code == 401
+    assert anon.get("/api/documents").status_code == 401
+
+
+def test_state_changes_need_the_csrf_header(client: TestClient) -> None:
+    override("x", [chunk(1)])
+    bare = TestClient(app)
+    resp = bare.post("/api/ask", json={"question": "q"})
+    assert resp.status_code == 403
+    assert resp.json()["detail"] == "Missing CSRF header"
+    assert client.post("/api/ask", json={"question": "q"}).status_code == 200
+
+
+def test_admin_endpoints_need_admin(client: TestClient) -> None:
+    assert client.get("/api/admin/users").status_code == 403
+
+
+def test_swagger_ui_disabled(anon: TestClient) -> None:
     # Swagger UI pulls assets from a CDN; it must not be served.
-    assert client.get("/docs").status_code == 404
+    assert anon.get("/docs").status_code == 404

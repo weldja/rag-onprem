@@ -25,8 +25,10 @@ if [ -f "$ROOT/.env" ]; then
     . "$ROOT/.env"
     set +a
 fi
-HTTP_PORT="${HTTP_PORT:-8000}"
-BASE_URL="http://127.0.0.1:${HTTP_PORT}"
+HTTPS_PORT="${HTTPS_PORT:-443}"
+BASE_URL="https://127.0.0.1:${HTTPS_PORT}"
+# Dev certificates are self-signed, so the helper scripts skip verification.
+CURL=(curl -sS -k)
 
 compose() {
     docker compose \

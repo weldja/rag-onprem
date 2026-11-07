@@ -10,6 +10,7 @@ from typing import Any
 
 from sqlalchemy import Engine, func, literal_column, select, text
 
+from app.auth.acl import Viewer, can_see
 from app.db.tables import chunks, documents
 
 
@@ -103,6 +104,7 @@ def hybrid_search(
     question: str,
     query_vector: list[float],
     *,
+    viewer: Viewer,
     embed_model: str,
     k: int,
     candidates: int,
@@ -111,7 +113,11 @@ def hybrid_search(
 ) -> list[RetrievedChunk]:
     distance = chunks.c.embedding.cosine_distance(query_vector)
     similarity = (1 - distance).label("score")
-    ready = (documents.c.status == "ready") & (chunks.c.embed_model == embed_model)
+    # Access control lives in the WHERE clause of both legs: chunks the viewer
+    # can't see never leave the database.
+    ready = (
+        (documents.c.status == "ready") & (chunks.c.embed_model == embed_model) & can_see(viewer)
+    )
 
     vector_stmt = (
         select(*_columns(similarity))

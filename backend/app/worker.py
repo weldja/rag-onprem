@@ -54,6 +54,7 @@ def run_once(engine: Engine, embedder: Embedder, settings: Settings) -> bool:
 def main() -> None:
     settings = get_settings()
     logging.basicConfig(level=settings.log_level, format="%(levelname)s %(name)s: %(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     engine = get_engine()
     client = OllamaClient(
         settings.ollama_url,
