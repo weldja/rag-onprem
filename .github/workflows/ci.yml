@@ -26,6 +26,18 @@ jobs:
           docker run --rm --network none rag-onprem/api:test \
             sh -c 'ruff check . && ruff format --check . && mypy && pytest -q'
 
+  shell:
+    name: Shellcheck
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck (release scripts run on customer servers)
+        run: |
+          docker run --rm -v "$PWD:/mnt:ro" -w /mnt --entrypoint sh \
+            koalaman/shellcheck-alpine:v0.10.0 -c \
+            'shellcheck -x -S warning scripts/*.sh deploy/release/*.sh deploy/ollama/entrypoint.sh backend/docker-entrypoint.sh'
+
   frontend:
     name: Frontend type-check and build
     runs-on: ubuntu-24.04
@@ -44,7 +56,7 @@ jobs:
 
   stack:
     name: Full stack - egress check, DB tests, e2e smoke
-    needs: [unit, frontend]
+    needs: [unit, shell, frontend]
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:

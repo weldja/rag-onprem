@@ -72,7 +72,7 @@ browser ──HTTPS──> nginx ──> api (FastAPI) ──> postgres+pgvector
 - **Store embedding model name and dimension alongside each vector.** Changing the embedding model means
   re-indexing. Never mix vectors from different models in one index.
 
-### Layout (`deploy/offline-bundle/` not created yet)
+### Layout (the release kit is `deploy/release/`, built by `scripts/build-release.sh`)
 
 ```
 backend/
@@ -149,6 +149,8 @@ bash scripts/e2e.sh                     # DB tests + ingest sample + HTTPS end-t
 bash scripts/make-dev-cert.sh           # self-signed cert for dev (dev-up.sh runs it if missing)
 bash scripts/eval.sh --detach --label X # answer-quality eval (~15 min), JSON report in eval-results/
 bash scripts/retrieval-probe.sh         # what each eval question retrieves, with scores; no LLM
+bash scripts/build-release.sh 1.0.0     # offline bundle in release/ (customer default models from .env.example)
+RELEASE_LLM_MODEL=qwen2.5:3b-instruct bash scripts/build-release.sh 1.0.0-test   # smaller test bundle
 bash scripts/egress-check.sh            # api/ollama/db must NOT reach the internet
 ```
 
@@ -205,6 +207,23 @@ Milestone 4 (answer quality):
 - Retrieval drops chunks whose text duplicates an already selected chunk.
 - Optional reranker (`RERANKER_MODEL`, fastembed/ONNX, built into the image) is off by default; see
   `docs/eval-results.md` for why.
+
+Milestone 5 (shipping):
+- `deploy/release/` holds the **customer-facing** kit: compose file (`pull_policy: never`, images
+  `rag-onprem/*:${RAG_VERSION}`), GPU override, and `install`, `preflight`, `create-admin`, `backup`,
+  `restore` and `upgrade` scripts. These run on customer Linux servers. Keep them POSIX-tool-only, run
+  them via `bash x.sh`, and make sure they pass shellcheck (CI runs it).
+- Customer documentation: `docs/operations.md` (shipped as the bundle's README.md). Update it with
+  any operational change.
+- Every base image is pinned by digest (Dockerfiles, `deploy/docker-compose.yml`,
+  `scripts/make-dev-cert.sh`). Update pins deliberately (see the operations.md appendix).
+- Release testing: install the bundle under `COMPOSE_PROJECT_NAME=<other>` with other ports. The
+  release compose file is also named `rag-onprem` and would otherwise reuse the dev volumes.
+- Shell pitfalls already hit: `tr </dev/urandom | head` under `pipefail` needs `|| true` (SIGPIPE);
+  `df` on Docker's root fails on Docker Desktop; `cygpath -m` keeps relative paths relative (use
+  `-am`); `COMPOSE_FILE` needs `COMPOSE_PATH_SEPARATOR=:` to work on Windows.
+- CI (`.github/workflows/ci.yml`): unit tests with networking off, shellcheck, frontend build and URL
+  check, then a full stack with a 0.5B model for the egress check, DB tests and an e2e smoke test.
 
 ## Working conventions
 

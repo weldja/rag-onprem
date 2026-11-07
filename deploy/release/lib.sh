@@ -21,7 +21,7 @@ die()  { printf '%s\n' "${RED}error:${RESET} $*" >&2; exit 1; }
 
 # Absolute host path in a form `docker -v` understands (Windows: C:/...).
 native_path() {
-    if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else realpath "$1"; fi
+    if command -v cygpath >/dev/null 2>&1; then cygpath -am "$1"; else realpath "$1"; fi
 }
 
 load_env() {
@@ -62,6 +62,6 @@ wait_healthy() {
 
 verify_checksums() {
     local dir="${1:-.}"
-    [ -f "$dir/SHA256SUMS" ] || die "$dir/SHA256SUMS missing: incomplete bundle?"
-    (cd "$dir" && sha256sum --quiet -c SHA256SUMS) || die "Checksum mismatch in $dir: the bundle is damaged or was modified"
+    [ -f "$dir/SHA256SUMS" ] || die "$dir/SHA256SUMS missing: incomplete copy?"
+    (cd "$dir" && sha256sum --quiet -c SHA256SUMS) || die "Checksum mismatch in $dir: files are damaged or were modified"
 }

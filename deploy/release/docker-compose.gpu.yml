@@ -1,7 +1,8 @@
 # NVIDIA GPU for the model runtime. install.sh enables this automatically when
 # preflight finds a GPU and the NVIDIA container runtime, by setting
+#   COMPOSE_PATH_SEPARATOR=:
 #   COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml
-# in .env. Remove that line (or set it to docker-compose.yml) to go back to CPU.
+# in .env. Remove the COMPOSE_FILE line to go back to CPU.
 services:
   ollama:
     deploy:

@@ -34,6 +34,8 @@ else
     ok "created .env with a random database password"
 fi
 if [ "$gpu" = 1 ]; then
+    # Explicit separator: Compose defaults to ';' on Windows and ':' elsewhere.
+    set_env COMPOSE_PATH_SEPARATOR ":"
     set_env COMPOSE_FILE "docker-compose.yml:docker-compose.gpu.yml"
     ok "GPU enabled"
 fi

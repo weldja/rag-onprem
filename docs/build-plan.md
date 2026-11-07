@@ -1,5 +1,9 @@
 # rag-onprem — phased build plan
 
+> **Status (2026-11-07):** Milestones 1–5 are implemented. See `CLAUDE.md` ("Current state") for what was
+> built and how it differs from this plan, `docs/eval-results.md` for answer quality, and
+> `docs/operations.md` for installation and operations.
+
 ## Context
 `rag-onprem` only has `CLAUDE.md` and `.gitignore` so far. The first goal is a thin end-to-end slice:
 `docker compose up` brings up Postgres+pgvector, Ollama and the API. We ingest one PDF, ask a

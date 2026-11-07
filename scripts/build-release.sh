@@ -12,7 +12,7 @@ export MSYS_NO_PATHCONV=1
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
-native_path() { if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else realpath "$1"; fi; }
+native_path() { if command -v cygpath >/dev/null 2>&1; then cygpath -am "$1"; else realpath "$1"; fi; }
 from_example() { sed -n "s/^$1=//p" .env.example; }
 
 VERSION="${1:-}"

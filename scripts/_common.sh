@@ -11,7 +11,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 native_path() {
     if command -v cygpath >/dev/null 2>&1; then
-        cygpath -m "$1"
+        cygpath -am "$1"
     else
         realpath "$1"
     fi
@@ -26,8 +26,11 @@ if [ -f "$ROOT/.env" ]; then
     set +a
 fi
 HTTPS_PORT="${HTTPS_PORT:-443}"
+# Used by the scripts that source this file.
+# shellcheck disable=SC2034
 BASE_URL="https://127.0.0.1:${HTTPS_PORT}"
 # Dev certificates are self-signed, so the helper scripts skip verification.
+# shellcheck disable=SC2034
 CURL=(curl -sS -k)
 
 compose() {

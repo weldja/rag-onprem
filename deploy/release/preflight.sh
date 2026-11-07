@@ -54,8 +54,11 @@ else fail "${mem_gb} GB RAM: at least 12 GB required for the default 7B model"; 
 
 # --- Disk -------------------------------------------------------------------
 root="$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || echo /var/lib/docker)"
-free_gb="$(df -Pk "$root" 2>/dev/null | awk 'NR==2 {printf "%d", $4/1024/1024}')"
-[ -n "$free_gb" ] || free_gb="$(df -Pk . | awk 'NR==2 {printf "%d", $4/1024/1024}')"
+# The Docker root may not be visible from the host (Docker Desktop keeps it in
+# a VM); fall back to this folder's filesystem.
+free_gb="$( (df -Pk "$root" 2>/dev/null || true) | awk 'NR==2 {printf "%d", $4/1024/1024}')"
+[ -n "$free_gb" ] || free_gb="$( (df -Pk . 2>/dev/null || true) | awk 'NR==2 {printf "%d", $4/1024/1024}')"
+free_gb="${free_gb:-0}"
 if [ "$free_gb" -ge 40 ]; then ok "${free_gb} GB free for Docker"
 elif [ "$free_gb" -ge 25 ]; then warn "${free_gb} GB free for Docker: enough to install, little room for documents (40+ recommended)"
 else fail "${free_gb} GB free for Docker: at least 25 GB required"; problems=$((problems + 1)); fi
@@ -84,6 +87,10 @@ if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
     if docker info 2>/dev/null | grep -qi 'nvidia'; then
         ok "NVIDIA GPU with container runtime: $(nvidia-smi -L | head -1)"
         gpu=1
+        vram_mb="$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -dc 0-9 || true)"
+        if [ -n "$vram_mb" ] && [ "$vram_mb" -lt 6000 ]; then
+            warn "GPU has only $((vram_mb / 1024)) GB of memory: part of the model will run on the CPU (8 GB+ recommended)"
+        fi
     else
         warn "NVIDIA GPU found but the NVIDIA Container Toolkit isn't configured for Docker; using CPU"
     fi

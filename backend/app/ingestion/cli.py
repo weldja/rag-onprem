@@ -38,6 +38,7 @@ def main(argv: list[str] | None = None) -> int:
     group_names = [g for g in (args.groups or [settings.default_group]) if g]
 
     logging.basicConfig(level=settings.log_level, format="%(levelname)s %(name)s: %(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     client = OllamaClient(
         settings.ollama_url,
         llm_model=settings.llm_model,

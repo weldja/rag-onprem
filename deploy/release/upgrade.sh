@@ -28,13 +28,18 @@ info "Loading new images"
 gzip -dc "$new/images.tar.gz" | docker load | sed 's/^/  /'
 
 info "Updating compose files and scripts (keeping .env and certs)"
+# Copy to a temp name then rename, so the running copy of this script is never
+# overwritten in place. Files that are already the same file are skipped.
+replace() {
+    [ "$new/$1" -ef "./$1" ] && return 0
+    cp "$new/$1" "./$1.new" && mv "./$1.new" "./$1"
+}
 for f in docker-compose.yml docker-compose.gpu.yml lib.sh preflight.sh install.sh \
-    create-admin.sh backup.sh restore.sh upgrade.sh README.md VERSION .env.example; do
-    cp "$new/$f" "./$f.new" && mv "./$f.new" "./$f"
+    create-admin.sh backup.sh restore.sh upgrade.sh README.md VERSION .env.example \
+    SHA256SUMS images.tar.gz; do
+    replace "$f"
 done
-rm -rf nginx && cp -r "$new/nginx" ./nginx
-cp "$new/SHA256SUMS" ./SHA256SUMS
-cp "$new/images.tar.gz" ./images.tar.gz
+rm -rf nginx.new && cp -r "$new/nginx" nginx.new && rm -rf nginx && mv nginx.new nginx
 
 # New settings get their defaults; existing ones are left alone.
 while IFS= read -r line; do
