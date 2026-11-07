@@ -1,6 +1,20 @@
-from app.llm.prompts import NOT_FOUND_ANSWER, is_not_found_answer
-from app.retrieval.answer import answer_events, answer_question, build_context, parse_citations
+from app.llm.prompts import NOT_FOUND_ANSWER, is_not_found_answer, prompt_version
+from app.retrieval.answer import (
+    Request,
+    answer_events,
+    answer_question,
+    build_context,
+    build_messages,
+    parse_citations,
+    recent_history,
+    retrieval_query,
+    strip_citations,
+)
 from tests.fakes import FakeEmbedder, FakeLLM, chunk, fixed_retriever
+
+
+def ask(question: str, **kw: object) -> Request:
+    return Request(question=question, **kw)  # type: ignore[arg-type]
 
 
 def test_parse_citations_dedupes_orders_and_drops_out_of_range() -> None:
@@ -30,15 +44,21 @@ def test_not_found_detection() -> None:
     assert not is_not_found_answer("Leave is 27 days [1]. " + "x" * 400)
 
 
-def test_answer_returns_only_cited_sources() -> None:
+def test_prompt_version_is_stable_and_short() -> None:
+    assert prompt_version() == prompt_version()
+    assert len(prompt_version()) == 10
+
+
+def test_answer_returns_only_cited_sources_but_reports_all_retrieved() -> None:
     hits = [chunk(1, page=1), chunk(2, page=2, text="27 days of leave"), chunk(3, page=3)]
     llm = FakeLLM("You get 27 days [2].")
     result = answer_question(
-        "How much leave?", retrieve=fixed_retriever(hits), llm=llm, embedder=FakeEmbedder()
+        ask("How much leave?"), retrieve=fixed_retriever(hits), llm=llm, embedder=FakeEmbedder()
     )
     assert result.found
     assert [(s.id, s.page, s.chunk_id) for s in result.sources] == [(2, 2, 102)]
     assert result.sources[0].snippet == "27 days of leave"
+    assert [s.id for s in result.retrieved] == [1, 2, 3]
     system, user = llm.messages
     assert system["role"] == "system" and "ONLY" in system["content"]
     assert "Question: How much leave?" in user["content"]
@@ -48,7 +68,7 @@ def test_answer_returns_only_cited_sources() -> None:
 def test_no_hits_skip_the_llm() -> None:
     llm = FakeLLM("should not be called")
     result = answer_question(
-        "Capital of Peru?", retrieve=fixed_retriever([]), llm=llm, embedder=FakeEmbedder()
+        ask("Capital of Peru?"), retrieve=fixed_retriever([]), llm=llm, embedder=FakeEmbedder()
     )
     assert not result.found
     assert result.answer == NOT_FOUND_ANSWER
@@ -57,7 +77,7 @@ def test_no_hits_skip_the_llm() -> None:
 
 def test_model_not_found_reply_is_normalised() -> None:
     result = answer_question(
-        "q",
+        ask("q"),
         retrieve=fixed_retriever([chunk(1)]),
         llm=FakeLLM("I couldn't find that in your documents."),
         embedder=FakeEmbedder(),
@@ -66,10 +86,90 @@ def test_model_not_found_reply_is_normalised() -> None:
     assert result.sources == []
 
 
+# ---------------------------------------------------------------- history
+
+
+HISTORY = [
+    {"role": "user", "content": "How much annual leave do I get?"},
+    {"role": "assistant", "content": "27 days [1], plus bank holidays [2]."},
+    {"role": "user", "content": "What about expenses?"},
+    {"role": "assistant", "content": "Mileage is 45p [1]."},
+]
+
+
+def test_recent_history_keeps_last_exchanges_without_citations() -> None:
+    assert recent_history(HISTORY, 1) == [  # type: ignore[arg-type]
+        {"role": "user", "content": "What about expenses?"},
+        {"role": "assistant", "content": "Mileage is 45p."},
+    ]
+    assert len(recent_history(HISTORY, 5)) == 4  # type: ignore[arg-type]
+    assert recent_history(HISTORY, 0) == []  # type: ignore[arg-type]
+
+
+def test_recent_history_skips_unpaired_messages() -> None:
+    broken = [{"role": "assistant", "content": "orphan"}, *HISTORY[:2], HISTORY[2]]
+    assert recent_history(broken, 3) == [  # type: ignore[arg-type]
+        {"role": "user", "content": "How much annual leave do I get?"},
+        {"role": "assistant", "content": "27 days, plus bank holidays."},
+    ]
+
+
+def test_strip_citations() -> None:
+    assert strip_citations("A [1]. B [2, 3][4].") == "A. B."
+
+
+def test_short_follow_ups_include_the_previous_question_in_retrieval() -> None:
+    assert retrieval_query("And for part-timers?", HISTORY) == (  # type: ignore[arg-type]
+        "What about expenses?\nAnd for part-timers?"
+    )
+    long_q = "Please explain in detail how the hotel cap works for stays outside London on business"
+    assert retrieval_query(long_q, HISTORY) == long_q  # type: ignore[arg-type]
+    assert retrieval_query("Short?", []) == "Short?"
+
+
+def test_messages_include_history_between_system_and_question() -> None:
+    req = ask("And part-timers?", history=HISTORY, history_turns=1)
+    msgs = build_messages(req, [chunk(1)])
+    assert [m["role"] for m in msgs] == ["system", "user", "assistant", "user"]
+    assert msgs[1]["content"] == "What about expenses?"
+
+
+# ---------------------------------------------------------------- summary
+
+
+def test_summary_uses_spread_and_summary_prompt() -> None:
+    llm = FakeLLM("Overview of the handbook [1][2].")
+    spread = [chunk(1, page=1), chunk(2, page=4)]
+    result = answer_question(
+        ask("Summarise", mode="summary"),
+        retrieve=fixed_retriever([]),  # must not be used
+        spread=lambda: spread,
+        llm=llm,
+        embedder=FakeEmbedder(),
+    )
+    assert result.found
+    assert [s.page for s in result.sources] == [1, 4]
+    assert "summarise documents" in llm.messages[0]["content"]
+
+
+def test_summary_is_never_turned_into_not_found() -> None:
+    result = answer_question(
+        ask("Summarise", mode="summary"),
+        retrieve=fixed_retriever([]),
+        spread=lambda: [chunk(1)],
+        llm=FakeLLM("I couldn't find that in your documents."),
+        embedder=FakeEmbedder(),
+    )
+    assert result.found
+
+
+# --------------------------------------------------------------- streaming
+
+
 def test_events_stream_tokens_then_done_with_sources() -> None:
     events = list(
         answer_events(
-            "q",
+            ask("q"),
             retrieve=fixed_retriever([chunk(1, page=4)]),
             llm=FakeLLM("Answer is here [1]."),
             embedder=FakeEmbedder(),
@@ -84,11 +184,27 @@ def test_events_stream_tokens_then_done_with_sources() -> None:
     done = events[-1]
     assert done["found"] is True
     assert done["sources"][0]["page"] == 4
+    assert "retrieved" not in done
+
+
+def test_events_debug_includes_retrieved() -> None:
+    events = list(
+        answer_events(
+            ask("q"),
+            retrieve=fixed_retriever([chunk(1), chunk(2)]),
+            llm=FakeLLM("A [1]."),
+            embedder=FakeEmbedder(),
+            debug=True,
+        )
+    )
+    assert [s["id"] for s in events[-1]["retrieved"]] == [1, 2]
 
 
 def test_events_not_found_has_no_tokens() -> None:
     events = list(
-        answer_events("q", retrieve=fixed_retriever([]), llm=FakeLLM("x"), embedder=FakeEmbedder())
+        answer_events(
+            ask("q"), retrieve=fixed_retriever([]), llm=FakeLLM("x"), embedder=FakeEmbedder()
+        )
     )
     assert [e["type"] for e in events] == ["status", "done"]
     assert events[-1]["found"] is False
@@ -97,7 +213,7 @@ def test_events_not_found_has_no_tokens() -> None:
 def test_events_model_failure_yields_error() -> None:
     events = list(
         answer_events(
-            "q",
+            ask("q"),
             retrieve=fixed_retriever([chunk(1)]),
             llm=FakeLLM("x", fail=True),
             embedder=FakeEmbedder(),

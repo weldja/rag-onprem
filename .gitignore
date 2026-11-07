@@ -65,5 +65,8 @@ deploy/offline-bundle/out/
 Thumbs.db
 desktop.ini
 
+# --- Evaluation reports (summaries go in docs/eval-results.md) ---
+/eval-results/
+
 # --- Claude Code local settings ---
 .claude/settings.local.json

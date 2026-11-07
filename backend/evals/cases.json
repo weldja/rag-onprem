@@ -1,0 +1,69 @@
+[
+  {"id": "leave-days", "question": "How many days of annual leave do full-time staff get?",
+   "expect": [{"document": "northwind-handbook-2026.pdf", "page": 2}], "answer_any": [["27"]]},
+  {"id": "carryover-deadline", "question": "By when must carried-over leave be used?",
+   "expect": [{"document": "northwind-handbook-2026.pdf", "page": 2}], "answer_any": [["31 March"]]},
+  {"id": "core-hours", "question": "What are the core working hours?",
+   "expect": [{"document": "northwind-handbook-2026.pdf", "page": 5}], "answer_any": [["10:00", "10am", "10 am"], ["16:00", "4pm", "4 pm"]]},
+  {"id": "overtime", "question": "How is overtime paid?",
+   "expect": [{"document": "northwind-handbook-2026.pdf", "page": 5}], "answer_any": [["1.5"]]},
+
+  {"id": "motorcycle-mileage", "question": "What is the mileage rate for a motorcycle?",
+   "expect": [{"document": "expense-rates-2026.xlsx", "section": "Mileage"}], "answer_any": [["24p", "24 pence"]]},
+  {"id": "edinburgh-hotel", "question": "What is the nightly hotel cap in Edinburgh?",
+   "expect": [{"document": "expense-rates-2026.xlsx", "section": "Hotels"}], "answer_any": [["150"]]},
+  {"id": "dinner-limit", "question": "How much can I claim for dinner?",
+   "expect": [{"document": "expense-rates-2026.xlsx", "section": "Subsistence"}], "answer_any": [["30"]]},
+
+  {"id": "password-length", "question": "How long must passwords be?",
+   "expect": [{"document": "it-security-policy.docx", "section": "Passwords"}, {"document": "northwind-handbook-2026.pdf", "page": 4}],
+   "answer_any": [["14"]]},
+  {"id": "restricted-data", "question": "Where may Restricted data be stored or sent?",
+   "expect": [{"document": "it-security-policy.docx", "section": "Data classification"}], "answer_any": [["UK"]]},
+  {"id": "laptop-replacement", "question": "How often are laptops replaced?",
+   "expect": [{"document": "it-security-policy.docx", "section": "Laptops"}], "answer_any": [["4 years", "four years"]]},
+  {"id": "phishing", "question": "How should I report a phishing email?",
+   "expect": [{"document": "it-security-policy.docx", "section": "Email"}], "answer_any": [["Report Phish"]]},
+  {"id": "lost-laptop", "question": "How quickly must a lost laptop be reported?",
+   "expect": [{"document": "it-security-policy.docx", "section": "Laptops"}, {"document": "northwind-handbook-2026.pdf", "page": 4}],
+   "answer_any": [["24 hours"]]},
+
+  {"id": "it-setup-time", "question": "What time is IT setup on my first day?",
+   "expect": [{"document": "onboarding-2026.pptx", "page": 2}], "answer_any": [["9:30", "09:30"]]},
+  {"id": "probation-length", "question": "How long is the probation period?",
+   "expect": [{"document": "onboarding-2026.pptx", "page": 3}], "answer_any": [["6 months", "six months"]]},
+  {"id": "pension", "question": "How much does the company contribute to my pension?",
+   "expect": [{"document": "onboarding-2026.pptx", "page": 4}], "answer_any": [["5%", "5 %", "five percent"]]},
+  {"id": "it-extension", "question": "What is the IT desk phone extension?",
+   "expect": [{"document": "onboarding-2026.pptx", "page": 5}], "answer_any": [["2222"]]},
+
+  {"id": "opening-hours", "question": "When is the office open?",
+   "expect": [{"document": "office-facilities.html"}], "answer_any": [["20:00", "8pm", "8 pm"]]},
+  {"id": "fire-assembly", "question": "Where is the fire assembly point?",
+   "expect": [{"document": "office-facilities.html"}], "answer_any": [["car park B"]]},
+  {"id": "parking-allocation", "question": "How are parking spaces allocated?",
+   "expect": [{"document": "office-facilities.html"}], "answer_any": [["ballot"]]},
+
+  {"id": "acme-notice", "question": "What is the notice period on the Acme cleaning contract?",
+   "expect": [{"document": "acme-cleaning-contract.md"}], "answer_any": [["90 days"]]},
+  {"id": "acme-credits", "question": "What service credit applies if Acme's audit score is too low?",
+   "expect": [{"document": "acme-cleaning-contract.md"}], "answer_any": [["10%", "10 %"]]},
+
+  {"id": "followup-bicycle", "question": "And for a bicycle?",
+   "history": [
+     {"role": "user", "content": "What is the mileage rate for a car?"},
+     {"role": "assistant", "content": "45p per mile for the first 10,000 miles, then 25p [1]."}
+   ],
+   "expect": [{"document": "expense-rates-2026.xlsx", "section": "Mileage"}], "answer_any": [["20p", "20 pence"]]},
+  {"id": "followup-reviews", "question": "When are the reviews?",
+   "history": [
+     {"role": "user", "content": "How long is probation?"},
+     {"role": "assistant", "content": "Probation lasts 6 months [1]."}
+   ],
+   "expect": [{"document": "onboarding-2026.pptx", "page": 3}], "answer_any": [["3 months", "three months"]]},
+
+  {"id": "off-topic", "question": "What is the capital of Peru?", "expect_found": false},
+  {"id": "paternity-leave", "question": "How many days of paternity leave do I get?", "expect_found": false},
+  {"id": "remote-abroad", "question": "Can I work remotely from another country?", "expect_found": false},
+  {"id": "ceo-salary", "question": "What is the CEO's salary?", "expect_found": false}
+]

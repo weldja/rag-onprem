@@ -61,3 +61,34 @@ def chunk(
 
 def fixed_retriever(hits: list[RetrievedChunk]):  # type: ignore[no-untyped-def]
     return lambda _question, _vector: hits
+
+
+class FakeSearch:
+    """Stands in for DbSearch; records the scope it was asked for."""
+
+    def __init__(self, hits: list[RetrievedChunk], spread: list[RetrievedChunk] | None = None):
+        self.hits = hits
+        self.spread_hits = spread if spread is not None else hits
+        self.scopes: list[object] = []
+        self.queries: list[str] = []
+
+    def retriever(self, document_ids=None):  # type: ignore[no-untyped-def]
+        self.scopes.append(document_ids)
+
+        def retrieve(question: str, _vector: list[float]) -> list[RetrievedChunk]:
+            self.queries.append(question)
+            return self.hits
+
+        return retrieve
+
+    def spread(self, document_ids):  # type: ignore[no-untyped-def]
+        self.scopes.append(("spread", list(document_ids)))
+        return self.spread_hits
+
+
+class FakeReranker:
+    """Scores by how many times the query's first word appears in the text."""
+
+    def score(self, query: str, texts: list[str]) -> list[float]:
+        word = query.split()[0].lower()
+        return [float(t.lower().count(word)) for t in texts]

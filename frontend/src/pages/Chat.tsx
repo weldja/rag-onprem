@@ -1,7 +1,7 @@
-import { useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { api, askStream, type Source } from "../api";
+import { api, askStream, type AskOptions, type HistoryTurn, type Source } from "../api";
 
 interface Turn {
   id: number;
@@ -10,6 +10,27 @@ interface Turn {
   stage: "retrieving" | "generating" | "done" | "error";
   found: boolean;
   sources: Source[];
+  summary: boolean;
+}
+
+/** A request handed over from another page (e.g. "Summarise" on Documents). */
+export interface PendingAsk {
+  question: string;
+  options: AskOptions;
+}
+
+// Previous exchanges sent with each question so follow-ups make sense. The
+// server uses only the most recent ones; the conversation lives in this tab.
+const HISTORY_TURNS = 3;
+
+function historyOf(turns: Turn[]): HistoryTurn[] {
+  return turns
+    .filter((t) => t.stage === "done" && t.found && !t.summary)
+    .slice(-HISTORY_TURNS)
+    .flatMap((t) => [
+      { role: "user" as const, content: t.question },
+      { role: "assistant" as const, content: t.answer },
+    ]);
 }
 
 // Turn [n] markers into in-page links so they can be rendered as citation buttons.
@@ -76,7 +97,13 @@ function Answer({ turn }: { turn: Turn }) {
   );
 }
 
-export default function Chat() {
+export default function Chat({
+  pending,
+  onPendingTaken,
+}: {
+  pending?: PendingAsk | null;
+  onPendingTaken?: () => void;
+}) {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [question, setQuestion] = useState("");
   const [busy, setBusy] = useState(false);
@@ -88,21 +115,19 @@ export default function Chat() {
       all.map((t) => (t.id === id ? { ...t, ...(typeof patch === "function" ? patch(t) : patch) } : t)),
     );
 
-  const ask = async (e?: FormEvent) => {
-    e?.preventDefault();
-    const q = question.trim();
-    if (!q || busy) return;
+  const run = async (q: string, options: AskOptions) => {
     const id = nextId.current++;
+    const summary = options.mode === "summary";
     setTurns((all) => [
       ...all,
-      { id, question: q, answer: "", stage: "retrieving", found: true, sources: [] },
+      { id, question: q, answer: "", stage: "retrieving", found: true, sources: [], summary },
     ]);
-    setQuestion("");
     setBusy(true);
     abort.current = new AbortController();
     try {
       await askStream(
         q,
+        options,
         (ev) => {
           if (ev.type === "status") update(id, { stage: ev.stage });
           else if (ev.type === "token") update(id, (t) => ({ answer: t.answer + ev.text }));
@@ -124,6 +149,28 @@ export default function Chat() {
       setBusy(false);
       abort.current = null;
     }
+  };
+
+  const ask = async (e?: FormEvent) => {
+    e?.preventDefault();
+    const q = question.trim();
+    if (!q || busy) return;
+    setQuestion("");
+    await run(q, { history: historyOf(turns) });
+  };
+
+  // Requests handed over from other pages run as soon as nothing else is.
+  useEffect(() => {
+    if (pending && !busy) {
+      onPendingTaken?.();
+      void run(pending.question, pending.options);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pending, busy]);
+
+  const newConversation = () => {
+    abort.current?.abort();
+    setTurns([]);
   };
 
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -148,6 +195,11 @@ export default function Chat() {
         </article>
       ))}
       <form className="composer" onSubmit={ask}>
+        {turns.length > 0 && (
+          <button type="button" className="link" onClick={newConversation} title="Forget this conversation">
+            New conversation
+          </button>
+        )}
         <textarea
           value={question}
           onChange={(e) => setQuestion(e.target.value)}

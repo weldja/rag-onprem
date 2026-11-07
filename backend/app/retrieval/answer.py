@@ -4,14 +4,19 @@ Context building (excerpts wrapped in <document> tags, with any literal
 </document> neutralised so file content can't break out of the data region)
 is adapted from rag-claude's ask_stream. Citations are numbered [n] ids that
 map back to the retrieved chunks.
+
+Two modes:
+  answer   hybrid retrieval for the question (plus the previous question when
+           the new one looks like a follow-up), answer prompt
+  summary  chunks sampled across the chosen documents, summary prompt
 """
 
 import html
 import logging
 import re
-from collections.abc import Callable, Iterator
-from dataclasses import asdict, dataclass
-from typing import Any
+from collections.abc import Callable, Iterator, Sequence
+from dataclasses import asdict, dataclass, field
+from typing import Any, Literal
 
 from app.llm.base import ChatMessage, Embedder, LLMClient
 from app.llm.ollama import OllamaError
@@ -22,9 +27,13 @@ log = logging.getLogger(__name__)
 
 # (question, query_vector) -> relevant chunks, best first; [] when nothing is relevant.
 Retriever = Callable[[str, list[float]], list[RetrievedChunk]]
+Mode = Literal["answer", "summary"]
 
 _CITATION = re.compile(r"\[(\d+(?:\s*[,;]\s*\d+)*)\]")
 _SNIPPET_CHARS = 300
+# A short question after earlier turns is probably a follow-up ("and for
+# part-timers?"); retrieval then also uses the previous question.
+_FOLLOW_UP_MAX_WORDS = 12
 
 
 @dataclass(frozen=True)
@@ -37,6 +46,7 @@ class Source:
     chunk_id: int
     snippet: str
     score: float
+    rerank_score: float | None = None
 
 
 @dataclass(frozen=True)
@@ -44,9 +54,18 @@ class Answer:
     answer: str
     found: bool
     sources: list[Source]
+    retrieved: list[Source] = field(default_factory=list)  # every chunk sent to the LLM
 
 
 NOT_FOUND = Answer(NOT_FOUND_ANSWER, found=False, sources=[])
+
+
+@dataclass(frozen=True)
+class Request:
+    question: str
+    history: Sequence[ChatMessage] = ()
+    mode: Mode = "answer"
+    history_turns: int = 1
 
 
 def build_context(hits: list[RetrievedChunk]) -> str:
@@ -62,13 +81,46 @@ def build_context(hits: list[RetrievedChunk]) -> str:
     return "\n\n".join(parts)
 
 
-def build_messages(question: str, hits: list[RetrievedChunk]) -> list[ChatMessage]:
+def strip_citations(text: str) -> str:
+    """Earlier answers' [n] markers refer to excerpts the model no longer sees."""
+    return re.sub(r"\s*" + _CITATION.pattern, "", text)
+
+
+def recent_history(history: Sequence[ChatMessage], turns: int) -> list[ChatMessage]:
+    """The last `turns` complete user/assistant exchanges, oldest first."""
+    if turns <= 0:
+        return []
+    kept: list[ChatMessage] = []
+    msgs = [m for m in history if m["role"] in ("user", "assistant") and m["content"].strip()]
+    i = len(msgs) - 1
+    while i >= 1 and len(kept) < 2 * turns:
+        if msgs[i]["role"] == "assistant" and msgs[i - 1]["role"] == "user":
+            kept[:0] = [
+                {"role": "user", "content": msgs[i - 1]["content"]},
+                {"role": "assistant", "content": strip_citations(msgs[i]["content"])},
+            ]
+            i -= 2
+        else:
+            i -= 1
+    return kept
+
+
+def retrieval_query(question: str, history: Sequence[ChatMessage]) -> str:
+    previous = next((m["content"] for m in reversed(history) if m["role"] == "user"), None)
+    if previous and len(question.split()) <= _FOLLOW_UP_MAX_WORDS:
+        return f"{previous}\n{question}"
+    return question
+
+
+def build_messages(req: Request, hits: list[RetrievedChunk]) -> list[ChatMessage]:
+    system = load_prompt("summary_system" if req.mode == "summary" else "answer_system")
     return [
-        {"role": "system", "content": load_prompt("answer_system")},
+        {"role": "system", "content": system},
+        *recent_history(req.history, req.history_turns),
         {
             "role": "user",
             "content": load_prompt("answer_user").format(
-                context=build_context(hits), question=question
+                context=build_context(hits), question=req.question
             ),
         },
     ]
@@ -90,76 +142,102 @@ def _snippet(text: str) -> str:
     return flat if len(flat) <= _SNIPPET_CHARS else flat[: _SNIPPET_CHARS - 1].rstrip() + "…"
 
 
-def finalise(text: str, hits: list[RetrievedChunk]) -> Answer:
+def _source(n: int, hit: RetrievedChunk) -> Source:
+    return Source(
+        id=n,
+        document=hit.filename,
+        document_id=hit.document_id,
+        page=hit.page,
+        section=hit.section,
+        chunk_id=hit.chunk_id,
+        snippet=_snippet(hit.text),
+        score=round(hit.score, 4),
+        rerank_score=round(hit.rerank_score, 4) if hit.rerank_score is not None else None,
+    )
+
+
+def finalise(text: str, hits: list[RetrievedChunk], mode: Mode = "answer") -> Answer:
+    retrieved = [_source(n, h) for n, h in enumerate(hits, start=1)]
     text = text.strip()
-    if not text or is_not_found_answer(text):
-        return NOT_FOUND
-    sources = []
-    for n in parse_citations(text, len(hits)):
-        hit = hits[n - 1]
-        sources.append(
-            Source(
-                id=n,
-                document=hit.filename,
-                document_id=hit.document_id,
-                page=hit.page,
-                section=hit.section,
-                chunk_id=hit.chunk_id,
-                snippet=_snippet(hit.text),
-                score=round(hit.score, 4),
-            )
-        )
+    if not text or (mode == "answer" and is_not_found_answer(text)):
+        return Answer(NOT_FOUND.answer, found=False, sources=[], retrieved=retrieved)
+    sources = [retrieved[n - 1] for n in parse_citations(text, len(hits))]
     if not sources:
         log.warning("LLM answer contained no valid citations")
-    return Answer(text, found=True, sources=sources)
+    return Answer(text, found=True, sources=sources, retrieved=retrieved)
 
 
-def _retrieve(question: str, retrieve: Retriever, embedder: Embedder) -> list[RetrievedChunk]:
-    hits = retrieve(question, embedder.embed([question])[0])
+def gather(
+    req: Request,
+    *,
+    retrieve: Retriever,
+    spread: Callable[[], list[RetrievedChunk]] | None,
+    embedder: Embedder,
+) -> list[RetrievedChunk]:
+    if req.mode == "summary":
+        if spread is None:
+            raise ValueError("summary mode needs a spread retriever")
+        return spread()
+    query = retrieval_query(req.question, req.history)
+    hits = retrieve(query, embedder.embed([query])[0])
     log.debug("Retrieved %d chunks", len(hits))
     return hits
 
 
 def answer_question(
-    question: str, *, retrieve: Retriever, llm: LLMClient, embedder: Embedder
+    req: Request,
+    *,
+    retrieve: Retriever,
+    llm: LLMClient,
+    embedder: Embedder,
+    spread: Callable[[], list[RetrievedChunk]] | None = None,
 ) -> Answer:
-    hits = _retrieve(question, retrieve, embedder)
+    hits = gather(req, retrieve=retrieve, spread=spread, embedder=embedder)
     if not hits:
         return NOT_FOUND
-    return finalise(llm.chat(build_messages(question, hits)), hits)
+    return finalise(llm.chat(build_messages(req, hits)), hits, req.mode)
 
 
 def answer_events(
-    question: str, *, retrieve: Retriever, llm: LLMClient, embedder: Embedder
+    req: Request,
+    *,
+    retrieve: Retriever,
+    llm: LLMClient,
+    embedder: Embedder,
+    spread: Callable[[], list[RetrievedChunk]] | None = None,
+    debug: bool = False,
 ) -> Iterator[dict[str, Any]]:
     """Streaming protocol (event dicts, each with a "type"):
       status  {"stage": "retrieving" | "generating"}
       token   {"text": "..."}                    zero or more
-      done    {"answer", "found", "sources"}     final, authoritative answer
+      done    {"answer", "found", "sources"[, "retrieved"]}   final, authoritative
       error   {"message": "..."}                 instead of done
     Clients should replace the streamed text with done.answer: a not-found reply
     is normalised there, and sources are only known once the answer is complete.
     """
     try:
         yield {"type": "status", "stage": "retrieving"}
-        hits = _retrieve(question, retrieve, embedder)
+        hits = gather(req, retrieve=retrieve, spread=spread, embedder=embedder)
         if not hits:
-            yield {"type": "done", **_answer_dict(NOT_FOUND)}
+            yield {"type": "done", **answer_dict(NOT_FOUND, debug)}
             return
         yield {"type": "status", "stage": "generating"}
         parts: list[str] = []
-        for piece in llm.chat_stream(build_messages(question, hits)):
+        for piece in llm.chat_stream(build_messages(req, hits)):
             parts.append(piece)
             yield {"type": "token", "text": piece}
-        yield {"type": "done", **_answer_dict(finalise("".join(parts), hits))}
+        yield {"type": "done", **answer_dict(finalise("".join(parts), hits, req.mode), debug)}
     except OllamaError as exc:
         log.error("Model call failed: %s", exc)
         yield {"type": "error", "message": "The local model is unavailable."}
 
 
-def _answer_dict(answer: Answer) -> dict[str, Any]:
-    return {
+def answer_dict(answer: Answer, debug: bool = False) -> dict[str, Any]:
+    out: dict[str, Any] = {
         "answer": answer.answer,
         "found": answer.found,
         "sources": [asdict(s) for s in answer.sources],
     }
+    if debug:
+        out["retrieved"] = [asdict(s) for s in answer.retrieved]
+    return out

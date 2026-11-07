@@ -97,6 +97,9 @@ Apply these whenever you add the matching component:
 - Compose: backend services sit on a network with `internal: true`. Only nginx publishes a port.
 - Hugging Face / sentence-transformers: `HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`,
   `HF_HUB_DISABLE_TELEMETRY=1`. Load models from a local path, never from a hub ID at runtime.
+- onnxruntime (used by the fastembed reranker) starts 1DS telemetry **on import** unless
+  `ORT_DISABLE_TELEMETRY=1` is set. It's set in the backend base image and enforced by
+  `tests/test_offline_env.py`. Add any new library's switch to both.
 - Ollama: models pre-pulled into the `ollama` volume, or imported from GGUF in the offline bundle. The app
   must **never** call `/api/pull`. On startup, check that the configured models exist and fail with a clear error if they don't.
 - Avoid libraries with on-by-default telemetry (e.g. Chroma, LangChain tracing, Gradio). If one is

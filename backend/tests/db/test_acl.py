@@ -12,7 +12,7 @@ from app.auth.acl import Viewer
 from app.core.config import Settings, get_settings
 from app.db.tables import chunks
 from app.ingestion import registry
-from app.retrieval.search import hybrid_search
+from app.retrieval.search import document_spread, hybrid_search
 
 pytestmark = [pytest.mark.db, pytest.mark.enable_socket]
 
@@ -147,6 +147,65 @@ def test_only_uploader_or_admin_can_manage(db: Engine, world: dict[str, int]) ->
         registry.delete_document(db, world["budget"], fiona)
     info = registry.get_document(db, world["draft"], SETTINGS.embed_model, fiona)
     assert info.can_manage is True
+
+
+def test_document_scope_narrows_but_never_widens(db: Engine, world: dict[str, int]) -> None:
+    fiona = _viewer(db, world["fiona"])
+
+    def scoped(ids: list[int]) -> set[str]:
+        hits = hybrid_search(
+            db,
+            "anything",
+            QUERY,
+            viewer=fiona,
+            embed_model=SETTINGS.embed_model,
+            k=10,
+            candidates=30,
+            min_similarity=0.1,
+            keyword_keep=5,
+            document_ids=ids,
+        )
+        return {h.filename for h in hits}
+
+    assert scoped([world["budget"]]) == {"budget.txt"}
+    # Asking for HR's document by id doesn't get around the ACL.
+    assert scoped([world["salaries"]]) == set()
+
+
+def test_spread_samples_in_reading_order_within_acl(db: Engine, world: dict[str, int]) -> None:
+    with db.begin() as conn:
+        conn.execute(
+            insert(chunks),
+            [
+                {
+                    "document_id": world["budget"],
+                    "page": n,
+                    "ordinal": n,
+                    "text": f"budget part {n}",
+                    "embedding": _vec(0),
+                    "embed_model": SETTINGS.embed_model,
+                }
+                for n in range(1, 10)
+            ],
+        )
+    fiona = _viewer(db, world["fiona"])
+    picked = document_spread(
+        db, [world["budget"]], viewer=fiona, embed_model=SETTINGS.embed_model, k_per_document=4
+    )
+    # 10 chunks (ordinals 0-9) -> positions 0, 3, 6, 9.
+    assert [h.text for h in picked] == [
+        "Budget forecast zebracode",
+        "budget part 3",
+        "budget part 6",
+        "budget part 9",
+    ]
+    harry = _viewer(db, world["harry"])
+    assert (
+        document_spread(
+            db, [world["budget"]], viewer=harry, embed_model=SETTINGS.embed_model, k_per_document=4
+        )
+        == []
+    )
 
 
 def test_sharing_is_limited_to_own_groups(db: Engine, world: dict[str, int]) -> None:

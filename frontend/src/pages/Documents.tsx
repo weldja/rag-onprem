@@ -38,7 +38,13 @@ function size(bytes: number | null): string {
 
 const BUSY = new Set(["pending", "processing"]);
 
-export default function Documents({ me }: { me: Me }) {
+export default function Documents({
+  me,
+  onSummarise,
+}: {
+  me: Me;
+  onSummarise: (doc: DocumentInfo) => void;
+}) {
   const [docs, setDocs] = useState<DocumentInfo[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
   const [shareWith, setShareWith] = useState<number[]>([]);
@@ -193,6 +199,11 @@ export default function Documents({ me }: { me: Me }) {
                 )}
               </td>
               <td className="actions">
+                {d.status === "ready" && editing?.id !== d.id && (
+                  <button className="link" onClick={() => onSummarise(d)}>
+                    Summarise
+                  </button>
+                )}
                 {d.can_manage && editing?.id !== d.id && (
                   <>
                     <button className="link" onClick={() => setEditing({ id: d.id, groups: d.group_ids })}>

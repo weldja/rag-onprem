@@ -23,6 +23,7 @@ class RetrievedChunk:
     text: str
     score: float  # cosine similarity to the question, higher is closer
     section: str | None = None
+    rerank_score: float | None = None  # cross-encoder score, when a reranker ran
 
 
 def to_or_tsquery(question: str, max_terms: int = 40) -> str | None:
@@ -110,7 +111,10 @@ def hybrid_search(
     candidates: int,
     min_similarity: float,
     keyword_keep: int,
+    document_ids: Sequence[int] | None = None,
 ) -> list[RetrievedChunk]:
+    """Relevant chunks, best first, limited to what `viewer` may see (and to
+    `document_ids` when given). [] when the question is off-topic."""
     distance = chunks.c.embedding.cosine_distance(query_vector)
     similarity = (1 - distance).label("score")
     # Access control lives in the WHERE clause of both legs: chunks the viewer
@@ -118,6 +122,8 @@ def hybrid_search(
     ready = (
         (documents.c.status == "ready") & (chunks.c.embed_model == embed_model) & can_see(viewer)
     )
+    if document_ids:
+        ready = ready & documents.c.id.in_(list(document_ids))
 
     vector_stmt = (
         select(*_columns(similarity))
@@ -157,3 +163,60 @@ def hybrid_search(
         min_similarity=min_similarity,
         keyword_keep=keyword_keep,
     )
+
+
+def spread_positions(n: int, k: int) -> list[int]:
+    """k indexes spread evenly over range(n), always including the first and last."""
+    if n <= k:
+        return list(range(n))
+    if k == 1:
+        return [0]
+    return sorted({round(i * (n - 1) / (k - 1)) for i in range(k)})
+
+
+def document_spread(
+    engine: Engine,
+    document_ids: Sequence[int],
+    *,
+    viewer: Viewer,
+    embed_model: str,
+    k_per_document: int,
+) -> list[RetrievedChunk]:
+    """Chunks sampled evenly across each document, in reading order, for
+    summaries, where similarity search would only find one corner of the text.
+    Ported in spirit from rag-claude's _retrieve_document_spread."""
+    if not document_ids:
+        return []
+    visible = (
+        documents.c.id.in_(list(document_ids))
+        & (documents.c.status == "ready")
+        & (chunks.c.embed_model == embed_model)
+        & can_see(viewer)
+    )
+    with engine.connect() as conn:
+        rows = conn.execute(
+            select(chunks.c.id, chunks.c.document_id)
+            .join(documents, documents.c.id == chunks.c.document_id)
+            .where(visible)
+            .order_by(chunks.c.document_id, chunks.c.ordinal)
+        ).all()
+        by_doc: dict[int, list[int]] = {}
+        for r in rows:
+            by_doc.setdefault(r.document_id, []).append(r.id)
+        chosen = [
+            ids[i]
+            for doc_id in document_ids
+            if (ids := by_doc.get(doc_id))
+            for i in spread_positions(len(ids), k_per_document)
+        ]
+        if not chosen:
+            return []
+        detail = {
+            r.id: r
+            for r in conn.execute(
+                select(*_columns(literal_column("1.0").label("score")))
+                .join(documents, documents.c.id == chunks.c.document_id)
+                .where(chunks.c.id.in_(chosen))
+            )
+        }
+    return [_to_chunk(detail[cid]) for cid in chosen]

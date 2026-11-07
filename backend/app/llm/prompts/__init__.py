@@ -1,5 +1,11 @@
-"""Versioned prompt templates. Edit the .md files, not inline strings."""
+"""Versioned prompt templates. Edit the .md files, not inline strings.
 
+prompt_version() is a short hash of every template. It is reported with
+evaluation results (and in debug responses) so a quality change can be tied
+to the exact prompts that produced it.
+"""
+
+import hashlib
 from functools import cache
 from pathlib import Path
 
@@ -9,6 +15,15 @@ _DIR = Path(__file__).parent
 @cache
 def load_prompt(name: str) -> str:
     return (_DIR / f"{name}.md").read_text(encoding="utf-8").strip()
+
+
+@cache
+def prompt_version() -> str:
+    digest = hashlib.sha256()
+    for path in sorted(_DIR.glob("*.md")):
+        digest.update(path.name.encode())
+        digest.update(path.read_bytes().replace(b"\r\n", b"\n"))
+    return digest.hexdigest()[:10]
 
 
 # Phrase the system prompt tells the model to use when nothing is relevant.

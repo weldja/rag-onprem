@@ -2,7 +2,7 @@
 
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -39,6 +39,17 @@ class Settings(BaseSettings):
     min_similarity: float = Field(default=0.35, ge=-1.0, le=1.0)
     keyword_keep: int = Field(default=5, ge=0)  # top keyword hits kept even below min_similarity
 
+    # Optional cross-encoder reranker, baked into the api image at build time.
+    # Empty = disabled. Must match the image's RERANKER_MODEL build arg.
+    reranker_model: str = ""
+    reranker_cache_dir: str = "/opt/models/fastembed"
+    rerank_candidates: int = Field(default=20, gt=0, le=100)  # fused pool the reranker sees
+    rerank_min_score: float | None = None  # drop chunks the reranker scores below this
+
+    # Conversation and summaries
+    history_turns: int = Field(default=1, ge=0, le=5)  # previous exchanges sent to the LLM
+    summary_chunks: int = Field(default=12, gt=0, le=40)  # sampled per summary request
+
     # How long the API waits at startup for its models to appear in Ollama.
     startup_wait_s: float = Field(default=120.0, ge=0)
 
@@ -52,6 +63,12 @@ class Settings(BaseSettings):
     default_group: str = "All staff"
 
     log_level: str = "INFO"
+
+    @field_validator("rerank_min_score", mode="before")
+    @classmethod
+    def _empty_is_none(cls, value: object) -> object:
+        # Compose passes unset variables through as "".
+        return None if value == "" else value
 
 
 @lru_cache

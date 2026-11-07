@@ -2,25 +2,48 @@ import json
 import logging
 from collections.abc import Iterator
 from dataclasses import asdict
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import Engine, text
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.api.deps import get_db, get_embedder, get_llm, get_ollama, get_retriever
-from app.llm.base import Embedder, LLMClient
+from app.api.deps import AppSettings, get_db, get_embedder, get_llm, get_ollama, get_search
+from app.llm.base import ChatMessage, Embedder, LLMClient
 from app.llm.ollama import OllamaClient, OllamaError
-from app.retrieval.answer import Retriever, answer_events, answer_question
+from app.llm.prompts import prompt_version
+from app.retrieval.answer import Request, answer_events, answer_question
+from app.retrieval.service import Search
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api")
 
 
+class Turn(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(max_length=8000)
+
+
 class AskRequest(BaseModel):
     question: str = Field(min_length=1, max_length=2000)
+    # Earlier turns of this conversation, oldest first. The client keeps the
+    # conversation; the server stores nothing. Only the last few are used.
+    history: list[Turn] = Field(default_factory=list, max_length=20)
+    # Limit the search to these documents (ones the user can't see are ignored).
+    document_ids: list[int] | None = Field(default=None, max_length=20)
+    mode: Literal["answer", "summary"] = "answer"
+    # Include every retrieved chunk and the prompt version (used by evals).
+    debug: bool = False
+
+    @model_validator(mode="after")
+    def _summary_needs_documents(self) -> "AskRequest":
+        if self.mode == "summary" and not self.document_ids:
+            raise ValueError("summary mode needs document_ids")
+        if self.mode == "summary" and len(self.document_ids or []) > 5:
+            raise ValueError("summarise at most 5 documents at a time")
+        return self
 
 
 class SourceOut(BaseModel):
@@ -32,12 +55,25 @@ class SourceOut(BaseModel):
     chunk_id: int
     snippet: str
     score: float
+    rerank_score: float | None = None
 
 
 class AskResponse(BaseModel):
     answer: str
     found: bool
     sources: list[SourceOut]
+    retrieved: list[SourceOut] | None = None
+    prompt_version: str | None = None
+
+
+def _request(body: AskRequest, settings: AppSettings) -> Request:
+    history: list[ChatMessage] = [{"role": t.role, "content": t.content} for t in body.history]
+    return Request(
+        question=body.question.strip(),
+        history=history,
+        mode=body.mode,
+        history_turns=settings.history_turns,
+    )
 
 
 @router.get("/health")
@@ -45,6 +81,7 @@ def health(
     response: Response,
     engine: Annotated[Engine, Depends(get_db)],
     ollama: Annotated[OllamaClient, Depends(get_ollama)],
+    settings: AppSettings,
 ) -> dict[str, Any]:
     database = True
     try:
@@ -70,27 +107,41 @@ def health(
             m: (missing is not None and m not in missing)
             for m in (ollama.llm_model, ollama.embed_model)
         },
+        "reranker": settings.reranker_model or None,
     }
 
 
-@router.post("/ask", response_model=AskResponse)
+# exclude_unset (not exclude_none): debug fields are only set when asked for,
+# while sources keep explicit nulls such as page/section.
+@router.post("/ask", response_model=AskResponse, response_model_exclude_unset=True)
 def ask(
-    req: AskRequest,
-    retrieve: Annotated[Retriever, Depends(get_retriever)],
+    body: AskRequest,
+    search: Annotated[Search, Depends(get_search)],
     llm: Annotated[LLMClient, Depends(get_llm)],
     embedder: Annotated[Embedder, Depends(get_embedder)],
+    settings: AppSettings,
 ) -> AskResponse:
+    ids = body.document_ids
     try:
         result = answer_question(
-            req.question.strip(), retrieve=retrieve, llm=llm, embedder=embedder
+            _request(body, settings),
+            retrieve=search.retriever(ids),
+            spread=(lambda: search.spread(ids or [])) if body.mode == "summary" else None,
+            llm=llm,
+            embedder=embedder,
         )
     except OllamaError as exc:
         log.error("Model call failed: %s", exc)
         raise HTTPException(status_code=503, detail="The local model is unavailable.") from exc
+    extra: dict[str, Any] = {}
+    if body.debug:
+        extra["retrieved"] = [SourceOut(**asdict(s)) for s in result.retrieved]
+        extra["prompt_version"] = prompt_version()
     return AskResponse(
         answer=result.answer,
         found=result.found,
         sources=[SourceOut(**asdict(s)) for s in result.sources],
+        **extra,
     )
 
 
@@ -102,13 +153,22 @@ def _sse(events: Iterator[dict[str, Any]]) -> Iterator[str]:
 
 @router.post("/ask/stream")
 def ask_stream(
-    req: AskRequest,
-    retrieve: Annotated[Retriever, Depends(get_retriever)],
+    body: AskRequest,
+    search: Annotated[Search, Depends(get_search)],
     llm: Annotated[LLMClient, Depends(get_llm)],
     embedder: Annotated[Embedder, Depends(get_embedder)],
+    settings: AppSettings,
 ) -> StreamingResponse:
     """Server-sent events; see app.retrieval.answer.answer_events for the protocol."""
-    events = answer_events(req.question.strip(), retrieve=retrieve, llm=llm, embedder=embedder)
+    ids = body.document_ids
+    events = answer_events(
+        _request(body, settings),
+        retrieve=search.retriever(ids),
+        spread=(lambda: search.spread(ids or [])) if body.mode == "summary" else None,
+        llm=llm,
+        embedder=embedder,
+        debug=body.debug,
+    )
     return StreamingResponse(
         _sse(events),
         media_type="text/event-stream",

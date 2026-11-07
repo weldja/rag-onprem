@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api, ApiError, type Me } from "./api";
 import Account from "./pages/Account";
 import Admin from "./pages/Admin";
-import Chat from "./pages/Chat";
+import Chat, { type PendingAsk } from "./pages/Chat";
 import Documents from "./pages/Documents";
 import Login from "./pages/Login";
 
@@ -12,6 +12,7 @@ export default function App() {
   const [me, setMe] = useState<Me | null>(null);
   const [checked, setChecked] = useState(false);
   const [tab, setTab] = useState<Tab>("ask");
+  const [pending, setPending] = useState<PendingAsk | null>(null);
 
   useEffect(() => {
     api
@@ -65,9 +66,20 @@ export default function App() {
       <main>
         {/* Chat stays mounted so the conversation survives tab switches. */}
         <div hidden={tab !== "ask"}>
-          <Chat />
+          <Chat pending={pending} onPendingTaken={() => setPending(null)} />
         </div>
-        {tab === "documents" && <Documents me={me} />}
+        {tab === "documents" && (
+          <Documents
+            me={me}
+            onSummarise={(doc) => {
+              setPending({
+                question: `Summarise ${doc.filename}`,
+                options: { mode: "summary", document_ids: [doc.id] },
+              });
+              setTab("ask");
+            }}
+          />
+        )}
         {tab === "admin" && me.is_admin && <Admin me={me} />}
         {tab === "account" && <Account me={me} />}
       </main>

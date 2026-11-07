@@ -8,13 +8,29 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     UV_LINK_MODE=copy \
     UV_PROJECT_ENVIRONMENT=/opt/venv \
     PATH="/opt/venv/bin:$PATH" \
-    PYTHONPATH=/app
+    PYTHONPATH=/app \
+    # No telemetry, no hub access at runtime (checked by tests/test_offline_env.py).
+    # ORT_DISABLE_TELEMETRY stops onnxruntime's 1DS telemetry starting on import.
+    HF_HUB_OFFLINE=1 \
+    HF_HUB_DISABLE_TELEMETRY=1 \
+    ORT_DISABLE_TELEMETRY=1 \
+    DO_NOT_TRACK=1
 WORKDIR /app
 COPY pyproject.toml uv.lock ./
 
 # --- runtime image ---
 FROM base AS runtime
 RUN uv sync --frozen --no-dev --no-install-project
+
+# Optional reranker, downloaded HERE at build time (needs internet on the build
+# machine only). Empty = no reranker. Must match RERANKER_MODEL at runtime.
+ARG RERANKER_MODEL=""
+RUN if [ -n "$RERANKER_MODEL" ]; then \
+        HF_HUB_OFFLINE=0 python -c "import sys; \
+from fastembed.rerank.cross_encoder import TextCrossEncoder as T; \
+T(sys.argv[1], cache_dir='/opt/models/fastembed')" "$RERANKER_MODEL" \
+        && chmod -R a+rX /opt/models; \
+    fi
 COPY . .
 # /data/uploads is owned by the app user so a fresh named volume mounted there
 # inherits that ownership.

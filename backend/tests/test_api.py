@@ -7,7 +7,7 @@ from app.api import deps
 from app.auth.acl import Viewer
 from app.main import CSRF_HEADER, CSRF_VALUE, app
 from app.retrieval.search import RetrievedChunk
-from tests.fakes import FakeEmbedder, FakeLLM, chunk, fixed_retriever
+from tests.fakes import FakeEmbedder, FakeLLM, FakeSearch, chunk
 
 ALICE = Viewer(id=7, username="alice", is_admin=False)
 
@@ -26,11 +26,60 @@ def client(anon: TestClient) -> TestClient:
 
 
 def override(reply: str, hits: list[RetrievedChunk], *, fail: bool = False) -> FakeLLM:
+    llm, _ = override_with_search(reply, FakeSearch(hits), fail=fail)
+    return llm
+
+
+def override_with_search(
+    reply: str, search: FakeSearch, *, fail: bool = False
+) -> tuple[FakeLLM, FakeSearch]:
     llm = FakeLLM(reply, fail=fail)
     app.dependency_overrides[deps.get_llm] = lambda: llm
     app.dependency_overrides[deps.get_embedder] = lambda: FakeEmbedder()
-    app.dependency_overrides[deps.get_retriever] = lambda: fixed_retriever(hits)
-    return llm
+    app.dependency_overrides[deps.get_search] = lambda: search
+    return llm, search
+
+
+def test_ask_scope_history_and_debug(client: TestClient) -> None:
+    llm, search = override_with_search("Yes [1].", FakeSearch([chunk(1), chunk(2)]))
+    body = client.post(
+        "/api/ask",
+        json={
+            "question": "And part-timers?",
+            "document_ids": [4, 9],
+            "history": [
+                {"role": "user", "content": "How much leave?"},
+                {"role": "assistant", "content": "27 days [1]."},
+            ],
+            "debug": True,
+        },
+    ).json()
+    assert search.scopes == [[4, 9]]
+    assert search.queries == ["How much leave?\nAnd part-timers?"]
+    assert [m["role"] for m in llm.messages] == ["system", "user", "assistant", "user"]
+    assert [s["id"] for s in body["retrieved"]] == [1, 2]
+    assert len(body["prompt_version"]) == 10
+
+
+def test_ask_without_debug_omits_debug_fields(client: TestClient) -> None:
+    override("Yes [1].", [chunk(1)])
+    body = client.post("/api/ask", json={"question": "q"}).json()
+    assert "retrieved" not in body and "prompt_version" not in body
+
+
+def test_summary_mode(client: TestClient) -> None:
+    _, search = override_with_search("Overview [1].", FakeSearch([], spread=[chunk(1, page=3)]))
+    body = client.post(
+        "/api/ask", json={"question": "Summarise", "mode": "summary", "document_ids": [5]}
+    ).json()
+    assert body["found"] is True and body["sources"][0]["page"] == 3
+    assert ("spread", [5]) in search.scopes
+
+
+def test_summary_mode_needs_documents(client: TestClient) -> None:
+    override("x", [])
+    resp = client.post("/api/ask", json={"question": "Summarise", "mode": "summary"})
+    assert resp.status_code == 422
 
 
 def test_ask_returns_answer_with_cited_sources(client: TestClient) -> None:
@@ -50,6 +99,7 @@ def test_ask_returns_answer_with_cited_sources(client: TestClient) -> None:
             "chunk_id": 101,
             "snippet": "Up to 5 unused days",
             "score": 0.8,
+            "rerank_score": None,
         }
     ]
 

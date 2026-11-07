@@ -1,6 +1,6 @@
 """FastAPI dependencies. Tests override these with fakes."""
 
-from functools import lru_cache, partial
+from functools import lru_cache
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, Request, status
@@ -12,8 +12,8 @@ from app.core.config import Settings, get_settings
 from app.db.engine import get_engine
 from app.llm.base import Embedder, LLMClient
 from app.llm.ollama import OllamaClient
-from app.retrieval.answer import Retriever
-from app.retrieval.search import hybrid_search
+from app.retrieval.rerank import FastEmbedReranker, Reranker
+from app.retrieval.service import DbSearch, Search
 
 
 @lru_cache
@@ -59,20 +59,20 @@ def require_admin(viewer: Annotated[Viewer, Depends(get_current_user)]) -> Viewe
     return viewer
 
 
-def get_retriever(
+@lru_cache
+def get_reranker() -> Reranker | None:
+    """Loaded once; None when RERANKER_MODEL is empty."""
+    s = get_settings()
+    if not s.reranker_model:
+        return None
+    return FastEmbedReranker(s.reranker_model, s.reranker_cache_dir)
+
+
+def get_search(
     viewer: Annotated[Viewer, Depends(get_current_user)],
     settings: Annotated[Settings, Depends(get_settings)],
-) -> Retriever:
-    return partial(
-        hybrid_search,
-        get_engine(),
-        viewer=viewer,
-        embed_model=settings.embed_model,
-        k=settings.top_k,
-        candidates=settings.retrieval_candidates,
-        min_similarity=settings.min_similarity,
-        keyword_keep=settings.keyword_keep,
-    )
+) -> Search:
+    return DbSearch(get_engine(), viewer, settings, get_reranker())
 
 
 CurrentUser = Annotated[Viewer, Depends(get_current_user)]

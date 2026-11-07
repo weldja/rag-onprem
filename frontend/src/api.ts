@@ -150,10 +150,22 @@ export type AskEvent =
   | ({ type: "done" } & Answer)
   | { type: "error"; message: string };
 
+export interface HistoryTurn {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export interface AskOptions {
+  history?: HistoryTurn[];
+  document_ids?: number[];
+  mode?: "answer" | "summary";
+}
+
 /** POST /api/ask/stream and parse the server-sent events. EventSource can't
  *  POST, so this reads the response body directly. */
 export async function askStream(
   question: string,
+  options: AskOptions,
   onEvent: (e: AskEvent) => void,
   signal?: AbortSignal,
 ): Promise<void> {
@@ -161,7 +173,7 @@ export async function askStream(
     method: "POST",
     credentials: "same-origin",
     headers: { ...HEADERS, "Content-Type": "application/json" },
-    body: JSON.stringify({ question }),
+    body: JSON.stringify({ question, ...options }),
     signal,
   });
   if (!resp.ok || !resp.body) {

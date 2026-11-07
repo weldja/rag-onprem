@@ -19,6 +19,7 @@ dependencies = [
     "openpyxl>=3.1",
     "beautifulsoup4>=4.12",
     "argon2-cffi>=23.1",
+    "fastembed>=0.5",
 ]
 
 [dependency-groups]
@@ -56,5 +57,5 @@ strict = true
 packages = ["app"]
 
 [[tool.mypy.overrides]]
-module = ["pgvector.*", "openpyxl.*"]
+module = ["pgvector.*", "openpyxl.*", "onnxruntime.*", "fastembed.*"]
 ignore_missing_imports = true
