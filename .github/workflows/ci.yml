@@ -27,11 +27,13 @@ jobs:
             sh -c 'ruff check . && ruff format --check . && mypy && pytest -q'
 
   shell:
-    name: Shellcheck
+    name: Shellcheck and actionlint
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+      - name: actionlint (workflow files)
+        run: docker run --rm -v "$PWD:/repo:ro" -w /repo rhysd/actionlint:1.7.7 -color
       - name: shellcheck (release scripts run on customer servers)
         run: |
           docker run --rm -v "$PWD:/mnt:ro" -w /mnt --entrypoint sh \
@@ -63,7 +65,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Free disk space for model images
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
-      - name: Configure (tiny LLM: this job tests plumbing and isolation, not answer quality)
+      - name: "Configure (tiny LLM: this job tests plumbing and isolation, not answer quality)"
         run: |
           sed -e 's/^LLM_MODEL=.*/LLM_MODEL=qwen2.5:0.5b-instruct/' \
               -e 's/^HTTP_BIND=.*/HTTP_BIND=127.0.0.1/' \
