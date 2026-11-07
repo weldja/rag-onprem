@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Build and start the dev stack, then wait until the API reports healthy.
+# The first build downloads the models into the ollama image (several GB).
+source "$(dirname "$0")/_common.sh"
+
+if [ ! -f "$ROOT/.env" ]; then
+    password="$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32 || true)"
+    sed "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=${password}/" "$ROOT/.env.example" >"$ROOT/.env"
+    echo "Created .env with a random POSTGRES_PASSWORD"
+    set -a; . "$ROOT/.env"; set +a
+fi
+
+compose up -d --build "$@"
+
+echo "Waiting for ${BASE_URL}/api/health (the first start warms up the model)..."
+for _ in $(seq 1 120); do
+    if curl -fsS "${BASE_URL}/api/health" >/dev/null 2>&1; then
+        curl -sS "${BASE_URL}/api/health"
+        echo
+        exit 0
+    fi
+    sleep 5
+done
+
+echo "API not healthy after 10 minutes." >&2
+compose ps
+compose logs --tail=50 api ollama
+exit 1

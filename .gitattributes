@@ -1,0 +1,17 @@
+# Everything that runs inside Linux containers must keep LF line endings,
+# regardless of core.autocrlf on Windows checkouts.
+* text=auto
+*.sh        text eol=lf
+*.py        text eol=lf
+*.toml      text eol=lf
+*.ini       text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.conf      text eol=lf
+*.md        text eol=lf
+*.sql       text eol=lf
+Dockerfile* text eol=lf
+.env*       text eol=lf
+uv.lock     text eol=lf
+
+*.pdf binary

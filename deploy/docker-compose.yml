@@ -1,0 +1,94 @@
+# Production-style stack. Run from the repo root via scripts/dev-up.sh, or:
+#   docker compose --env-file .env -f deploy/docker-compose.yml up -d
+#
+# Network layout:
+#   backend (internal: true)  db, ollama, api, proxy  - no route to the internet
+#   edge                      proxy only              - the single published port
+# The api, db and ollama containers therefore cannot make outbound connections.
+name: rag-onprem
+
+services:
+  db:
+    image: pgvector/pgvector:0.8.0-pg16
+    environment:
+      POSTGRES_DB: rag
+      POSTGRES_USER: rag
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks: [backend]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rag -d rag"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  ollama:
+    # Models are pulled at BUILD time and baked into the image.
+    # The running container never downloads anything.
+    build:
+      context: ./ollama
+      args:
+        LLM_MODEL: ${LLM_MODEL:-qwen2.5:7b-instruct}
+        EMBED_MODEL: ${EMBED_MODEL:-bge-m3}
+    image: rag-onprem/ollama:dev
+    environment:
+      OLLAMA_KEEP_ALIVE: "-1"
+      OLLAMA_CONTEXT_LENGTH: ${LLM_NUM_CTX:-8192}
+      OLLAMA_NO_CLOUD: "1"
+    networks: [backend]
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ../backend
+      target: runtime
+    image: rag-onprem/api:dev
+    environment:
+      DATABASE_URL: postgresql+psycopg://rag:${POSTGRES_PASSWORD}@db:5432/rag
+      OLLAMA_URL: http://ollama:11434
+      LLM_MODEL: ${LLM_MODEL:-qwen2.5:7b-instruct}
+      EMBED_MODEL: ${EMBED_MODEL:-bge-m3}
+      EMBED_DIM: ${EMBED_DIM:-1024}
+      LLM_NUM_CTX: ${LLM_NUM_CTX:-8192}
+      CHUNK_SIZE: ${CHUNK_SIZE:-1000}
+      CHUNK_OVERLAP: ${CHUNK_OVERLAP:-150}
+      TOP_K: ${TOP_K:-6}
+      MIN_SIMILARITY: ${MIN_SIMILARITY:-0.35}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    depends_on:
+      db:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    networks: [backend]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=5).status == 200 else 1)"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    restart: unless-stopped
+
+  proxy:
+    # Minimal reverse proxy so the api can stay on the internal network.
+    # Milestone 3 extends this with the frontend and TLS.
+    image: nginx:1.27-alpine
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "${HTTP_BIND:-127.0.0.1}:${HTTP_PORT:-8000}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    networks: [backend, edge]
+    restart: unless-stopped
+
+networks:
+  backend:
+    internal: true
+  edge: {}
+
+volumes:
+  pgdata:

@@ -34,7 +34,7 @@ yarn-error.log*
 pnpm-debug.log*
 
 # --- Model weights & offline bundles (large binaries, never commit) ---
-models/
+/models/
 *.gguf
 *.safetensors
 *.bin
@@ -47,11 +47,12 @@ deploy/offline-bundle/out/
 *.tgz
 
 # --- Runtime data (Docker volumes bind-mounted in dev) ---
-data/
-uploads/
-pgdata/
-ollama/
-logs/
+# Anchored to the repo root so they don't hide source dirs like deploy/ollama/.
+/data/
+/uploads/
+/pgdata/
+/ollama/
+/logs/
 *.log
 
 # --- Editors / OS ---

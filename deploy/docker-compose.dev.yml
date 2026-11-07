@@ -1,0 +1,9 @@
+# Dev overrides: hot reload of backend/app from the host.
+services:
+  api:
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "/app/app"]
+    environment:
+      # Bind mounts from Windows don't deliver inotify events.
+      WATCHFILES_FORCE_POLLING: "true"
+    volumes:
+      - ../backend/app:/app/app

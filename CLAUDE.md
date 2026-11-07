@@ -10,9 +10,8 @@ their sources.
 
 It is installed **inside the customer's own server environment** and must work fully air-gapped.
 
-**Status:** pre-implementation. The repo holds only this file and the README. The stack below is the
-*proposed default*. Treat it as the plan, but flag it if a decision looks wrong rather than quietly
-working around it.
+**Status:** milestone 1 of `docs/build-plan.md` (see *Current state* below). The stack below is the
+chosen default. Flag it if a decision looks wrong rather than quietly working around it.
 
 ## Non-negotiable constraints
 
@@ -73,7 +72,7 @@ browser ──HTTPS──> nginx ──> api (FastAPI) ──> postgres+pgvector
 - **Store embedding model name and dimension alongside each vector.** Changing the embedding model means
   re-indexing. Never mix vectors from different models in one index.
 
-### Planned layout (not created yet)
+### Layout (`frontend/` and `deploy/offline-bundle/` not created yet)
 
 ```
 backend/
@@ -130,17 +129,33 @@ Apply these whenever you add the matching component:
   benchmark on it.
 - Containers are Linux. Write code and scripts for Linux, not Windows-specific paths or behaviour.
 
-## Commands (planned; update once they exist)
+## Commands
+
+Run from the repo root in Git Bash. Everything runs in containers, so uv and Python aren't needed on the host.
 
 ```bash
-bash scripts/dev-up.sh                  # docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.dev.yml up --build
-bash scripts/pull-models.sh             # build-time only: fetch model weights into the ollama volume / offline bundle
-cd backend && uv run pytest             # tests (sockets disabled)
-cd backend && uv run pytest tests/path/test_x.py::test_name   # single test
-cd backend && uv run ruff check . && uv run ruff format --check . && uv run mypy app
-cd backend && uv run alembic upgrade head
-bash scripts/export-offline-bundle.sh   # docker save images + model files into a transferable archive
+bash scripts/dev-up.sh                  # build + start stack (creates .env on first run), wait for /api/health
+bash scripts/dev-down.sh [-v]           # stop (-v also deletes the database volume)
+bash scripts/test.sh                    # ruff + mypy + pytest in the dev image with --network none
+bash scripts/test.sh -k citations       # extra args go to pytest
+bash scripts/ingest.sh samples/sample.pdf
+bash scripts/ask.sh "How many days of leave can I carry over?"
+bash scripts/e2e.sh                     # ingest the sample, then run the compose-marked tests against the live stack
+bash scripts/egress-check.sh            # api/ollama/db must NOT reach the internet
 ```
+
+- Models are baked into the ollama image at build time (`deploy/ollama/Dockerfile`). Changing
+  `LLM_MODEL`/`EMBED_MODEL` in `.env` needs `docker compose build ollama`.
+- Migrations run automatically on api start (`backend/docker-entrypoint.sh`).
+- Update `backend/uv.lock` with:
+  `docker run --rm -v "$(pwd -W)/backend:/app" -w /app ghcr.io/astral-sh/uv:0.8.4-python3.12-bookworm-slim uv lock`
+- `samples/sample.pdf` is generated (fictional content) by `backend/tests/pdfgen.py`.
+- `docs/build-plan.md` holds the milestone plan.
+
+## Current state
+
+Milestone 1 (thin end-to-end slice) is implemented: PDF ingestion CLI, vector search, `/api/ask` with `[n]` citations, `/api/health`.
+nginx (`proxy`) is the only service with a published port; api, db and ollama sit on an `internal: true` network.
 
 ## Working conventions
 
