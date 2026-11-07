@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.api.deps import get_ollama
+from app.api.documents import router as documents_router
 from app.api.routes import router
 from app.core.config import get_settings
 from app.llm.ollama import OllamaError
@@ -59,6 +60,7 @@ def create_app() -> FastAPI:
         openapi_url="/api/openapi.json",
     )
     app.include_router(router)
+    app.include_router(documents_router)
     return app
 
 

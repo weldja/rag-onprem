@@ -5,7 +5,7 @@ source "$(dirname "$0")/_common.sh"
 require_env
 
 failed=0
-for svc in api ollama db; do
+for svc in api worker ollama db; do
     if compose exec -T "$svc" timeout 5 bash -c 'exec 3<>/dev/tcp/1.1.1.1/443' 2>/dev/null; then
         echo "FAIL $svc: reached 1.1.1.1:443 directly"
         failed=1

@@ -7,6 +7,24 @@
 # The api, db and ollama containers therefore cannot make outbound connections.
 name: rag-onprem
 
+x-backend-env: &backend-env
+  DATABASE_URL: postgresql+psycopg://rag:${POSTGRES_PASSWORD}@db:5432/rag
+  OLLAMA_URL: http://ollama:11434
+  LLM_MODEL: ${LLM_MODEL:-qwen2.5:7b-instruct}
+  EMBED_MODEL: ${EMBED_MODEL:-bge-m3}
+  EMBED_DIM: ${EMBED_DIM:-1024}
+  LLM_NUM_CTX: ${LLM_NUM_CTX:-8192}
+  CHUNK_SIZE: ${CHUNK_SIZE:-1000}
+  CHUNK_OVERLAP: ${CHUNK_OVERLAP:-150}
+  TOP_K: ${TOP_K:-6}
+  MIN_SIMILARITY: ${MIN_SIMILARITY:-0.35}
+  UPLOAD_DIR: /data/uploads
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+
+x-backend-build: &backend-build
+  context: ../backend
+  target: runtime
+
 services:
   db:
     image: pgvector/pgvector:0.8.0-pg16
@@ -41,22 +59,11 @@ services:
     restart: unless-stopped
 
   api:
-    build:
-      context: ../backend
-      target: runtime
+    build: *backend-build
     image: rag-onprem/api:dev
-    environment:
-      DATABASE_URL: postgresql+psycopg://rag:${POSTGRES_PASSWORD}@db:5432/rag
-      OLLAMA_URL: http://ollama:11434
-      LLM_MODEL: ${LLM_MODEL:-qwen2.5:7b-instruct}
-      EMBED_MODEL: ${EMBED_MODEL:-bge-m3}
-      EMBED_DIM: ${EMBED_DIM:-1024}
-      LLM_NUM_CTX: ${LLM_NUM_CTX:-8192}
-      CHUNK_SIZE: ${CHUNK_SIZE:-1000}
-      CHUNK_OVERLAP: ${CHUNK_OVERLAP:-150}
-      TOP_K: ${TOP_K:-6}
-      MIN_SIMILARITY: ${MIN_SIMILARITY:-0.35}
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    environment: *backend-env
+    volumes:
+      - uploads:/data/uploads
     depends_on:
       db:
         condition: service_healthy
@@ -69,6 +76,22 @@ services:
       timeout: 10s
       retries: 5
       start_period: 120s
+    restart: unless-stopped
+
+  worker:
+    # Same image as api; indexes uploaded documents from the Postgres job queue.
+    # Starts after api is healthy, so migrations have already run.
+    build: *backend-build
+    image: rag-onprem/api:dev
+    entrypoint: []
+    command: ["python", "-m", "app.worker"]
+    environment: *backend-env
+    volumes:
+      - uploads:/data/uploads
+    depends_on:
+      api:
+        condition: service_healthy
+    networks: [backend]
     restart: unless-stopped
 
   proxy:
@@ -92,3 +115,4 @@ networks:
 
 volumes:
   pgdata:
+  uploads:

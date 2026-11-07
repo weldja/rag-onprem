@@ -24,10 +24,20 @@ class Settings(BaseSettings):
     chunk_size: int = Field(default=1000, gt=0)
     chunk_overlap: int = Field(default=150, ge=0)
     embed_batch: int = Field(default=32, gt=0)
+    sheet_chunk_chars: int = Field(default=1800, gt=200)
+    upload_dir: str = "/data/uploads"
+    max_upload_mb: int = Field(default=50, gt=0)  # keep in step with nginx client_max_body_size
+
+    # Worker
+    worker_poll_s: float = Field(default=2.0, gt=0)
+    job_stale_after_s: float = Field(default=1800.0, gt=0)
+    job_max_attempts: int = Field(default=3, gt=0)
 
     # Retrieval
     top_k: int = Field(default=6, gt=0, le=50)
+    retrieval_candidates: int = Field(default=30, gt=0, le=200)  # per leg, before fusion
     min_similarity: float = Field(default=0.35, ge=-1.0, le=1.0)
+    keyword_keep: int = Field(default=5, ge=0)  # top keyword hits kept even below min_similarity
 
     # How long the API waits at startup for its models to appear in Ollama.
     startup_wait_s: float = Field(default=120.0, ge=0)

@@ -4,7 +4,9 @@ Never calls /api/pull: models are baked into the ollama image at build time,
 and a missing model is a deployment error, not something to fix at runtime.
 """
 
+import json
 import logging
+from collections.abc import Iterator
 from typing import Any
 
 import httpx
@@ -91,6 +93,40 @@ class OllamaClient:
         if data.get("done_reason") == "length":
             log.warning("LLM answer was cut off at the token limit")
         return content
+
+    def chat_stream(self, messages: list[ChatMessage]) -> Iterator[str]:
+        payload = {
+            "model": self.llm_model,
+            "messages": messages,
+            "stream": True,
+            "options": {"temperature": self._temperature, "num_ctx": self._num_ctx},
+        }
+        try:
+            with self._http.stream("POST", "/api/chat", json=payload) as resp:
+                if resp.status_code != 200:
+                    body = resp.read().decode(errors="replace")[:300]
+                    raise OllamaError(f"Ollama /api/chat returned HTTP {resp.status_code}: {body}")
+                for line in resp.iter_lines():
+                    if not line.strip():
+                        continue
+                    try:
+                        data = json.loads(line)
+                    except ValueError as exc:
+                        raise OllamaError("Ollama /api/chat streamed invalid JSON") from exc
+                    if "error" in data:
+                        raise OllamaError(f"Ollama error: {data['error']}")
+                    piece = (data.get("message") or {}).get("content") or ""
+                    if piece:
+                        yield piece
+                    if data.get("done"):
+                        if data.get("done_reason") == "length":
+                            log.warning("LLM answer was cut off at the token limit")
+                        return
+        except httpx.TimeoutException as exc:
+            raise OllamaError("Ollama timed out on /api/chat") from exc
+        except httpx.HTTPError as exc:
+            raise OllamaError(f"Cannot reach Ollama at {self.base_url}: {exc}") from exc
+        raise OllamaError("Ollama /api/chat stream ended without completing")
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         if not texts:

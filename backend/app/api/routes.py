@@ -1,17 +1,19 @@
+import json
 import logging
+from collections.abc import Iterator
 from dataclasses import asdict
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import Engine, text
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.api.deps import get_db, get_embedder, get_llm, get_ollama, get_retriever
-from app.core.config import Settings, get_settings
 from app.llm.base import Embedder, LLMClient
 from app.llm.ollama import OllamaClient, OllamaError
-from app.retrieval.answer import Retriever, answer_question
+from app.retrieval.answer import Retriever, answer_events, answer_question
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api")
@@ -26,6 +28,7 @@ class SourceOut(BaseModel):
     document: str
     document_id: int
     page: int | None
+    section: str | None
     chunk_id: int
     snippet: str
     score: float
@@ -76,11 +79,10 @@ def ask(
     retrieve: Annotated[Retriever, Depends(get_retriever)],
     llm: Annotated[LLMClient, Depends(get_llm)],
     embedder: Annotated[Embedder, Depends(get_embedder)],
-    settings: Annotated[Settings, Depends(get_settings)],
 ) -> AskResponse:
     try:
         result = answer_question(
-            req.question.strip(), retrieve=retrieve, llm=llm, embedder=embedder, settings=settings
+            req.question.strip(), retrieve=retrieve, llm=llm, embedder=embedder
         )
     except OllamaError as exc:
         log.error("Model call failed: %s", exc)
@@ -89,4 +91,26 @@ def ask(
         answer=result.answer,
         found=result.found,
         sources=[SourceOut(**asdict(s)) for s in result.sources],
+    )
+
+
+def _sse(events: Iterator[dict[str, Any]]) -> Iterator[str]:
+    for event in events:
+        payload = {k: v for k, v in event.items() if k != "type"}
+        yield f"event: {event['type']}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+@router.post("/ask/stream")
+def ask_stream(
+    req: AskRequest,
+    retrieve: Annotated[Retriever, Depends(get_retriever)],
+    llm: Annotated[LLMClient, Depends(get_llm)],
+    embedder: Annotated[Embedder, Depends(get_embedder)],
+) -> StreamingResponse:
+    """Server-sent events; see app.retrieval.answer.answer_events for the protocol."""
+    events = answer_events(req.question.strip(), retrieve=retrieve, llm=llm, embedder=embedder)
+    return StreamingResponse(
+        _sse(events),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

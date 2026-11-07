@@ -1,8 +1,14 @@
-"""Vector search over chunks. Milestone 2 adds the keyword leg and RRF fusion."""
+"""Hybrid retrieval: pgvector cosine search + Postgres full-text search,
+merged with reciprocal rank fusion. Keyword search and RRF are adapted from
+rag-claude (_keyword_candidates, _rrf_merge).
+"""
 
+import re
+from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Any
 
-from sqlalchemy import Engine, select, text
+from sqlalchemy import Engine, func, literal_column, select, text
 
 from app.db.tables import chunks, documents
 
@@ -14,43 +20,134 @@ class RetrievedChunk:
     filename: str
     page: int | None
     text: str
-    score: float  # cosine similarity, higher is closer
+    score: float  # cosine similarity to the question, higher is closer
+    section: str | None = None
 
 
-def vector_search(
-    engine: Engine, query_vector: list[float], *, embed_model: str, k: int
+def to_or_tsquery(question: str, max_terms: int = 40) -> str | None:
+    """Keywords OR-ed together. Tokens are reduced to letters and digits, so no
+    user text can inject tsquery syntax. Requiring every term would usually
+    match nothing."""
+    tokens: list[str] = []
+    for tok in re.findall(r"[a-z0-9]+", question.lower()):
+        if len(tok) > 1 and tok not in tokens:
+            tokens.append(tok)
+    return " | ".join(tokens[:max_terms]) or None
+
+
+def rrf_merge(
+    ranked_lists: Sequence[Sequence[RetrievedChunk]], k_const: int = 60
+) -> list[RetrievedChunk]:
+    """Reciprocal rank fusion: score = sum of 1/(k + rank). Rank-based, so cosine
+    similarity and ts_rank never need to share a scale."""
+    scores: dict[int, float] = {}
+    by_id: dict[int, RetrievedChunk] = {}
+    for results in ranked_lists:
+        for rank, hit in enumerate(results, start=1):
+            scores[hit.chunk_id] = scores.get(hit.chunk_id, 0.0) + 1.0 / (k_const + rank)
+            by_id.setdefault(hit.chunk_id, hit)
+    return [by_id[cid] for cid in sorted(scores, key=lambda c: scores[c], reverse=True)]
+
+
+def select_hits(
+    vector_hits: Sequence[RetrievedChunk],
+    keyword_hits: Sequence[RetrievedChunk],
+    *,
+    k: int,
+    min_similarity: float,
+    keyword_keep: int,
+) -> list[RetrievedChunk]:
+    """Fuse both legs and apply the relevance gate.
+
+    - If nothing is semantically close (best similarity < min_similarity), the
+      question is off-topic: return nothing, whatever the keyword leg matched.
+    - Otherwise keep chunks above min_similarity, plus the top `keyword_keep`
+      keyword hits (exact terms such as codes and names that embeddings miss).
+    """
+    best = max((h.score for h in [*vector_hits, *keyword_hits]), default=-1.0)
+    if best < min_similarity:
+        return []
+    keyword_ids = {h.chunk_id for h in keyword_hits[:keyword_keep]}
+    fused = rrf_merge([vector_hits, keyword_hits])
+    kept = [h for h in fused if h.score >= min_similarity or h.chunk_id in keyword_ids]
+    return kept[:k]
+
+
+def _columns(similarity: Any) -> list[Any]:
+    return [
+        chunks.c.id,
+        chunks.c.document_id,
+        documents.c.filename,
+        chunks.c.page,
+        chunks.c.section,
+        chunks.c.text,
+        similarity,
+    ]
+
+
+def _to_chunk(row: object) -> RetrievedChunk:
+    r = row._mapping  # type: ignore[attr-defined]
+    return RetrievedChunk(
+        chunk_id=r["id"],
+        document_id=r["document_id"],
+        filename=r["filename"],
+        page=r["page"],
+        section=r["section"],
+        text=r["text"],
+        score=float(r["score"]),
+    )
+
+
+def hybrid_search(
+    engine: Engine,
+    question: str,
+    query_vector: list[float],
+    *,
+    embed_model: str,
+    k: int,
+    candidates: int,
+    min_similarity: float,
+    keyword_keep: int,
 ) -> list[RetrievedChunk]:
     distance = chunks.c.embedding.cosine_distance(query_vector)
-    stmt = (
-        select(
-            chunks.c.id,
-            chunks.c.document_id,
-            documents.c.filename,
-            chunks.c.page,
-            chunks.c.text,
-            (1 - distance).label("score"),
-        )
+    similarity = (1 - distance).label("score")
+    ready = (documents.c.status == "ready") & (chunks.c.embed_model == embed_model)
+
+    vector_stmt = (
+        select(*_columns(similarity))
         .join(documents, documents.c.id == chunks.c.document_id)
-        .where(chunks.c.embed_model == embed_model)
+        .where(ready)
         .order_by(distance)
-        .limit(k)
+        .limit(candidates)
     )
+
+    tsquery = to_or_tsquery(question)
+    keyword_stmt = None
+    if tsquery:
+        q = func.to_tsquery(literal_column("'english'"), tsquery)
+        keyword_stmt = (
+            select(*_columns(similarity))
+            .join(documents, documents.c.id == chunks.c.document_id)
+            .where(ready, chunks.c.tsv.bool_op("@@")(q))
+            .order_by(func.ts_rank_cd(chunks.c.tsv, q).desc())
+            .limit(candidates)
+        )
+
     with engine.begin() as conn:
         # pgvector >= 0.8: keep scanning the HNSW index when the WHERE filter
-        # discards candidates, instead of returning fewer than k rows.
+        # discards candidates, instead of returning fewer than requested.
         conn.execute(text("SET LOCAL hnsw.iterative_scan = relaxed_order"))
-        rows = conn.execute(stmt).all()
-    results = [
-        RetrievedChunk(
-            chunk_id=r.id,
-            document_id=r.document_id,
-            filename=r.filename,
-            page=r.page,
-            text=r.text,
-            score=float(r.score),
+        vector_hits = [_to_chunk(r) for r in conn.execute(vector_stmt)]
+        keyword_hits = (
+            [_to_chunk(r) for r in conn.execute(keyword_stmt)] if keyword_stmt is not None else []
         )
-        for r in rows
-    ]
+
     # relaxed_order can return rows slightly out of order.
-    results.sort(key=lambda c: c.score, reverse=True)
-    return results
+    vector_hits.sort(key=lambda h: h.score, reverse=True)
+    return select_hits(
+        vector_hits,
+        keyword_hits,
+        k=k,
+        min_similarity=min_similarity,
+        keyword_keep=keyword_keep,
+    )

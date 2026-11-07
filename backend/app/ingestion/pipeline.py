@@ -1,58 +1,81 @@
-"""Ingest one PDF: load -> split -> embed -> store, all chunks in one transaction."""
+"""Process one registered document: load -> split -> embed -> replace its chunks.
 
-import hashlib
+Used by the worker (uploads, re-index jobs) and the CLI. All of a document's
+chunks are replaced in a single transaction, so a re-index never leaves a
+half-written document visible to search.
+"""
+
 import logging
-from dataclasses import dataclass
 from itertools import batched
 from pathlib import Path
 
-from sqlalchemy import Engine, insert, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import Engine, delete, func, insert, select, update
 
 from app.core.config import Settings
 from app.db.tables import chunks, documents
-from app.ingestion.chunking import RecursiveTextSplitter
-from app.ingestion.loaders import LoadError, load_pdf
+from app.ingestion.chunking import Document, RecursiveTextSplitter
+from app.ingestion.loaders import LoadError, is_toc_chunk, load_file
 from app.llm.base import Embedder
 
 log = logging.getLogger(__name__)
 
 
 class IngestError(RuntimeError):
-    pass
+    """Permanent failure for this document (bad file, no text, wrong dimension)."""
 
 
-@dataclass
-class IngestResult:
-    document_id: int
-    filename: str
-    chunks: int
-    skipped: bool  # True if identical content was already ingested
+def split(pieces: list[Document], settings: Settings) -> list[Document]:
+    splitter = RecursiveTextSplitter(settings.chunk_size, settings.chunk_overlap)
+    out: list[Document] = []
+    for piece in pieces:
+        if piece.metadata.get("pre_chunked"):
+            out.append(piece)
+        else:
+            out.extend(splitter.split_documents([piece]))
+    return [c for c in out if not is_toc_chunk(c.page_content, c.metadata.get("page"))]
 
 
-def ingest_pdf(
-    path: Path, *, engine: Engine, embedder: Embedder, settings: Settings
-) -> IngestResult:
-    sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
+def set_status(engine: Engine, doc_id: int, status: str, error: str | None = None) -> None:
+    with engine.begin() as conn:
+        conn.execute(
+            update(documents)
+            .where(documents.c.id == doc_id)
+            .values(status=status, error=error, updated_at=func.now())
+        )
 
+
+def process_document(engine: Engine, doc_id: int, *, embedder: Embedder, settings: Settings) -> int:
+    """Index (or re-index) a document. Returns the number of chunks written.
+    Raises IngestError for permanent problems; model errors propagate so the
+    caller can retry."""
     with engine.connect() as conn:
-        existing = conn.execute(
-            select(documents.c.id).where(documents.c.sha256 == sha256)
-        ).scalar_one_or_none()
-    if existing is not None:
-        return IngestResult(existing, path.name, 0, skipped=True)
+        row = conn.execute(
+            select(documents.c.filename, documents.c.storage_path, documents.c.content_type).where(
+                documents.c.id == doc_id
+            )
+        ).one_or_none()
+    if row is None:
+        raise IngestError(f"Document {doc_id} no longer exists")
+    if not row.storage_path or not Path(row.storage_path).is_file():
+        raise IngestError(f"Original file for {row.filename} is missing; upload it again")
 
+    set_status(engine, doc_id, "processing")
     try:
-        loaded = load_pdf(path)
+        loaded = load_file(
+            Path(row.storage_path),
+            row.content_type or Path(row.filename).suffix,
+            sheet_chunk_chars=settings.sheet_chunk_chars,
+        )
     except LoadError as exc:
         raise IngestError(str(exc)) from exc
     if not loaded.pages:
         raise IngestError(
-            f"{path.name} has no extractable text (scanned PDFs need OCR, planned for later)"
+            f"{row.filename} has no extractable text (scanned PDFs need OCR, planned for later)"
         )
 
-    splitter = RecursiveTextSplitter(settings.chunk_size, settings.chunk_overlap)
-    pieces = splitter.split_documents(loaded.pages)
+    pieces = split(loaded.pages, settings)
+    if not pieces:
+        raise IngestError(f"{row.filename} produced no indexable text")
 
     vectors: list[list[float]] = []
     for batch in batched(pieces, settings.embed_batch):
@@ -60,38 +83,31 @@ def ingest_pdf(
     bad = {len(v) for v in vectors if len(v) != settings.embed_dim}
     if bad:
         raise IngestError(
-            f"Embedding model {embedder.embed_model} returned dimension {bad}, "
+            f"Embedding model {embedder.embed_model} returned dimension {sorted(bad)}, "
             f"but EMBED_DIM is {settings.embed_dim}"
         )
 
-    try:
-        with engine.begin() as conn:
-            document_id = conn.execute(
-                insert(documents)
-                .values(filename=path.name, sha256=sha256, page_count=loaded.page_count)
-                .returning(documents.c.id)
-            ).scalar_one()
-            conn.execute(
-                insert(chunks),
-                [
-                    {
-                        "document_id": document_id,
-                        "page": piece.metadata.get("page"),
-                        "ordinal": ordinal,
-                        "text": piece.page_content,
-                        "embedding": vector,
-                        "embed_model": embedder.embed_model,
-                    }
-                    for ordinal, (piece, vector) in enumerate(zip(pieces, vectors, strict=True))
-                ],
-            )
-    except IntegrityError:
-        # Same file ingested concurrently; the other run won.
-        with engine.connect() as conn:
-            existing = conn.execute(
-                select(documents.c.id).where(documents.c.sha256 == sha256)
-            ).scalar_one()
-        return IngestResult(existing, path.name, 0, skipped=True)
-
-    log.info("Ingested %s: %d pages, %d chunks", path.name, loaded.page_count, len(pieces))
-    return IngestResult(document_id, path.name, len(pieces), skipped=False)
+    with engine.begin() as conn:
+        conn.execute(delete(chunks).where(chunks.c.document_id == doc_id))
+        conn.execute(
+            insert(chunks),
+            [
+                {
+                    "document_id": doc_id,
+                    "page": piece.metadata.get("page"),
+                    "section": piece.metadata.get("section"),
+                    "ordinal": ordinal,
+                    "text": piece.page_content,
+                    "embedding": vector,
+                    "embed_model": embedder.embed_model,
+                }
+                for ordinal, (piece, vector) in enumerate(zip(pieces, vectors, strict=True))
+            ],
+        )
+        conn.execute(
+            update(documents)
+            .where(documents.c.id == doc_id)
+            .values(status="ready", error=None, page_count=loaded.page_count, updated_at=func.now())
+        )
+    log.info("Indexed document %d (%s): %d chunks", doc_id, row.filename, len(pieces))
+    return len(pieces)

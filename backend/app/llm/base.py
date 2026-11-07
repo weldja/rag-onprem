@@ -1,5 +1,6 @@
 """Interfaces for model access. Implementations must be local (see CLAUDE.md)."""
 
+from collections.abc import Iterator
 from typing import Protocol, TypedDict
 
 
@@ -10,6 +11,10 @@ class ChatMessage(TypedDict):
 
 class LLMClient(Protocol):
     def chat(self, messages: list[ChatMessage]) -> str: ...
+
+    def chat_stream(self, messages: list[ChatMessage]) -> Iterator[str]:
+        """Yield the answer in pieces as the model produces them."""
+        ...
 
 
 class Embedder(Protocol):

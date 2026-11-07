@@ -28,6 +28,42 @@ def test_chat_posts_native_api_and_returns_content() -> None:
     assert body["model"] == "qwen:7b" and body["stream"] is False
 
 
+def _ndjson(*objs: dict[str, object]) -> bytes:
+    return b"".join(json.dumps(o).encode() + b"\n" for o in objs)
+
+
+def test_chat_stream_yields_pieces_until_done() -> None:
+    def handler(req: httpx.Request) -> httpx.Response:
+        assert json.loads(req.content)["stream"] is True
+        return httpx.Response(
+            200,
+            content=_ndjson(
+                {"message": {"content": "Five "}, "done": False},
+                {"message": {"content": "days [1]."}, "done": False},
+                {"message": {"content": ""}, "done": True, "done_reason": "stop"},
+            ),
+        )
+
+    pieces = list(make_client(httpx.MockTransport(handler)).chat_stream([]))
+    assert pieces == ["Five ", "days [1]."]
+
+
+def test_chat_stream_error_line_raises() -> None:
+    transport = httpx.MockTransport(
+        lambda _r: httpx.Response(200, content=_ndjson({"error": "model crashed"}))
+    )
+    with pytest.raises(OllamaError, match="model crashed"):
+        list(make_client(transport).chat_stream([]))
+
+
+def test_chat_stream_truncated_raises() -> None:
+    transport = httpx.MockTransport(
+        lambda _r: httpx.Response(200, content=_ndjson({"message": {"content": "Fi"}}))
+    )
+    with pytest.raises(OllamaError, match="without completing"):
+        list(make_client(transport).chat_stream([]))
+
+
 def test_embed_returns_vectors_in_order() -> None:
     def handler(req: httpx.Request) -> httpx.Response:
         assert req.url.path == "/api/embed"

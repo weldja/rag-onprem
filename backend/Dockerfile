@@ -16,8 +16,11 @@ COPY pyproject.toml uv.lock ./
 FROM base AS runtime
 RUN uv sync --frozen --no-dev --no-install-project
 COPY . .
+# /data/uploads is owned by the app user so a fresh named volume mounted there
+# inherits that ownership.
 RUN sed -i 's/\r$//' docker-entrypoint.sh && chmod +x docker-entrypoint.sh \
-    && useradd --system --uid 10001 --home-dir /app app
+    && useradd --system --uid 10001 --home-dir /app app \
+    && mkdir -p /data/uploads && chown app /data/uploads
 USER app
 EXPOSE 8000
 ENTRYPOINT ["./docker-entrypoint.sh"]

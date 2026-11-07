@@ -7,3 +7,9 @@ services:
       WATCHFILES_FORCE_POLLING: "true"
     volumes:
       - ../backend/app:/app/app
+
+  worker:
+    # No auto-reload: restart after code changes with
+    #   docker compose ... restart worker
+    volumes:
+      - ../backend/app:/app/app

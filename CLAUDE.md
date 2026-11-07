@@ -154,8 +154,21 @@ bash scripts/egress-check.sh            # api/ollama/db must NOT reach the inter
 
 ## Current state
 
-Milestone 1 (thin end-to-end slice) is implemented: PDF ingestion CLI, vector search, `/api/ask` with `[n]` citations, `/api/health`.
-nginx (`proxy`) is the only service with a published port; api, db and ollama sit on an `internal: true` network.
+Milestones 1–2 of `docs/build-plan.md` are implemented:
+- Formats: PDF, DOCX, PPTX, XLSX, CSV, HTML, TXT/MD (`app/ingestion/loaders.py`). Spreadsheet chunks are
+  `pre_chunked` (header repeated per chunk) and must not be re-split.
+- Upload → original stored as `<sha256>.<ext>` in the `uploads` volume → `ingest_jobs` row → `worker`
+  service (`app/worker.py`) claims it with `FOR UPDATE SKIP LOCKED`, indexes, marks the document ready.
+  Re-index replaces a document's chunks in one transaction.
+- Retrieval is hybrid (`app/retrieval/search.py`): pgvector + full-text, RRF-fused. Relevance gate: if the
+  best cosine similarity < `MIN_SIMILARITY` the question is off-topic and the LLM isn't called.
+- API: `GET /api/health`, `POST /api/ask`, `POST /api/ask/stream` (SSE: status/token/done/error; `done`
+  carries the authoritative answer and sources), `POST|GET /api/documents`, `GET|DELETE /api/documents/{id}`,
+  `POST /api/documents/{id}/reindex`.
+- nginx (`proxy`) is the only service with a published port; api, worker, db and ollama sit on an
+  `internal: true` network.
+
+Not yet: frontend, auth/ACLs (milestone 3). Until ACLs exist, every user can see every document.
 
 ## Working conventions
 
