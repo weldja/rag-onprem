@@ -9,6 +9,9 @@ name=rag-onprem-test-ldap
 image="osixia/openldap:1.5.0@sha256:18742e9c449c9c1afe129d3f2f3ee15fb34cc43e5f940a20f3399728f41d7c28"
 docker rm -f "$name" >/dev/null 2>&1 || true  # leftover from an interrupted run
 ca_dir="$(mktemp -d)"
+# mktemp makes the directory 0700; slapd runs as another uid inside its
+# container and must be able to read the certificates mounted from here.
+chmod 755 "$ca_dir"
 cleanup() { docker rm -f "$name" >/dev/null 2>&1 || true; rm -rf "$ca_dir"; }
 trap cleanup EXIT
 
@@ -41,16 +44,19 @@ docker run -d --name "$name" --hostname ldap.test --network rag-onprem_backend -
 
 echo "Waiting for slapd..."
 up=0
-for _ in $(seq 1 60); do
-    if docker exec "$name" ldapsearch -x -H ldap://localhost -b dc=example,dc=test -s base >/dev/null 2>&1; then
+for _ in $(seq 1 120); do
+    # Bind as admin: the image's ACLs hide the base entry from anonymous
+    # searches (reported as "no such object") once start-up has finished.
+    if docker exec "$name" ldapsearch -x -H ldap://localhost -D cn=admin,dc=example,dc=test \
+        -w test-admin-password -b dc=example,dc=test -s base >/dev/null 2>&1; then
         up=1
         break
     fi
     sleep 1
 done
 if [ "$up" != 1 ]; then
-    echo "OpenLDAP did not start:" >&2
-    docker logs --tail 30 "$name" >&2 || true
+    echo "OpenLDAP did not start (start-up messages, without connection noise):" >&2
+    docker logs "$name" 2>&1 | grep -v ' conn=' | tail -40 >&2 || true
     exit 1
 fi
 
