@@ -39,7 +39,7 @@ into an offline bundle). It is **never** allowed at container start or at reques
 | LLM runtime | **Ollama** (own container) | Simple to run, GPU or CPU, handles GGUF quantisation, local HTTP API. vLLM is the upgrade path for customers with larger GPUs. |
 | LLM model | 7–9B instruct model, Q4_K_M GGUF (e.g. Qwen or Llama family) | Runs on a single 8–12 GB GPU or a strong CPU. Model name is config, not code. **Check the licence permits commercial redistribution before you ship it.** |
 | Embeddings | **bge-m3** (or `nomic-embed-text`) served by Ollama | Multilingual, good retrieval quality. One model runtime for both LLM and embeddings. Embedding dimension is config. |
-| Reranker (optional, phase 2) | `bge-reranker-v2-m3` via sentence-transformers inside the API container | Weights baked into the image. Turned off by default. |
+| Reranker (optional) | fastembed ONNX cross-encoder (e.g. `Xenova/ms-marco-MiniLM-L-6-v2`) inside the API container | Weights built into the image. Off by default (see `docs/eval-results.md`). Chosen over sentence-transformers to avoid pulling PyTorch (about 1 GB) into the image. |
 | Vector store + DB | **PostgreSQL 16 + pgvector** | One stateful service holds documents, chunks, vectors, users, ACLs and job queue. Gives hybrid search (pgvector + `tsvector` full-text) and a single backup target. Qdrant is the alternative if vector scale outgrows Postgres. |
 | Backend | **Python 3.12, FastAPI**, Pydantic v2, SQLAlchemy 2 + psycopg 3, Alembic | |
 | Dependency mgmt | **uv** (`pyproject.toml` + `uv.lock`) | Reproducible locked installs. `uv run` avoids venv-activation differences on Windows. |
@@ -147,6 +147,8 @@ bash scripts/ingest.sh samples/sample.pdf   # CLI ingest, shared with "All staff
 RAG_USER=alice RAG_PASSWORD=... bash scripts/ask.sh "How many days of leave can I carry over?"
 bash scripts/e2e.sh                     # DB tests + ingest sample + HTTPS end-to-end tests (as e2e-admin)
 bash scripts/make-dev-cert.sh           # self-signed cert for dev (dev-up.sh runs it if missing)
+bash scripts/eval.sh --detach --label X # answer-quality eval (~15 min), JSON report in eval-results/
+bash scripts/retrieval-probe.sh         # what each eval question retrieves, with scores; no LLM
 bash scripts/egress-check.sh            # api/ollama/db must NOT reach the internet
 ```
 
@@ -190,6 +192,19 @@ Milestone 3 (auth and access control):
 
 Tests: `scripts/test.sh` (unit, offline), `scripts/test-db.sh` (real Postgres, `rag_test` DB),
 `scripts/e2e.sh` (runs both DB and HTTPS end-to-end tests).
+
+Milestone 4 (answer quality):
+- **Prompt changes must go through the eval:** `bash scripts/eval.sh --detach --label X`, then compare
+  with `docs/eval-results.md`. The 3B dev model is very sensitive to prompt wording. Never put example
+  sentences in prompts, because the model copies them into answers. Add a case to `backend/evals/cases.json`
+  for every failure found by hand.
+- Conversation history: the client sends it and the server keeps none. The last `HISTORY_TURNS`
+  exchanges go to the LLM with old `[n]` markers stripped, and short follow-ups also retrieve with the
+  previous question.
+- Summary mode: `mode: "summary"` + `document_ids` samples chunks evenly across the document.
+- Retrieval drops chunks whose text duplicates an already selected chunk.
+- Optional reranker (`RERANKER_MODEL`, fastembed/ONNX, built into the image) is off by default; see
+  `docs/eval-results.md` for why.
 
 ## Working conventions
 

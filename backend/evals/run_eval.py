@@ -97,7 +97,9 @@ def setup(admin: httpx.Client, corpus_dir: Path) -> str:
         ).raise_for_status()
 
     doc_ids = []
-    for path in build(corpus_dir):
+    paths = build(corpus_dir)
+    names = {p.name for p in paths}
+    for path in paths:
         resp = admin.post(
             "/api/documents",
             files={"file": (path.name, path.read_bytes())},
@@ -110,6 +112,13 @@ def setup(admin: httpx.Client, corpus_dir: Path) -> str:
         if doc["stale"]:
             admin.post(f"/api/documents/{doc['id']}/reindex")
         doc_ids.append(doc["id"])
+
+    # Office files embed timestamps, so each run's corpus has new bytes and
+    # uploads as new documents. Remove earlier copies so the eval user only
+    # ever sees one corpus.
+    for doc in admin.get("/api/documents").json():
+        if doc["filename"] in names and doc["id"] not in doc_ids and group_id in doc["group_ids"]:
+            admin.delete(f"/api/documents/{doc['id']}").raise_for_status()
 
     deadline = time.monotonic() + 600
     while time.monotonic() < deadline:

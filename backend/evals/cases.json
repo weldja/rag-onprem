@@ -1,6 +1,8 @@
 [
   {"id": "leave-days", "question": "How many days of annual leave do full-time staff get?",
    "expect": [{"document": "northwind-handbook-2026.pdf", "page": 2}], "answer_any": [["27"]]},
+  {"id": "carryover-days", "question": "How many unused days of annual leave can I carry over?",
+   "expect": [{"document": "northwind-handbook-2026.pdf", "page": 2}], "answer_any": [["5", "five"]]},
   {"id": "carryover-deadline", "question": "By when must carried-over leave be used?",
    "expect": [{"document": "northwind-handbook-2026.pdf", "page": 2}], "answer_any": [["31 March"]]},
   {"id": "core-hours", "question": "What are the core working hours?",

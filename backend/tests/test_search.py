@@ -68,6 +68,16 @@ def test_keeps_close_vector_hits_and_top_keyword_hits() -> None:
     assert ids == {101, 102, 104}  # 103 too far, 105 beyond keyword_keep
 
 
+def test_identical_text_from_another_document_is_kept_once() -> None:
+    vector = [
+        chunk(1, score=0.9, text="Probation lasts 6 months.", filename="deck-v1.pptx"),
+        chunk(2, score=0.89, text="Probation  lasts 6 MONTHS.", filename="deck-v2.pptx"),
+        chunk(3, score=0.5, text="Reviews at 3 months."),
+    ]
+    hits = select_hits(vector, [], k=5, min_similarity=0.35, keyword_keep=0)
+    assert [h.chunk_id for h in hits] == [101, 103]
+
+
 def test_respects_k() -> None:
     vector = [chunk(i, score=0.9 - i / 100) for i in range(10)]
     assert len(select_hits(vector, [], k=3, min_similarity=0.35, keyword_keep=0)) == 3

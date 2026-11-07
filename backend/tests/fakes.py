@@ -44,7 +44,7 @@ def chunk(
     *,
     page: int | None = 1,
     score: float = 0.8,
-    text: str = "text",
+    text: str | None = None,
     filename: str = "a.pdf",
     section: str | None = None,
 ) -> RetrievedChunk:
@@ -53,7 +53,8 @@ def chunk(
         document_id=1,
         filename=filename,
         page=page,
-        text=text,
+        # Distinct by default: retrieval drops chunks with duplicate text.
+        text=text if text is not None else f"text of chunk {n}",
         score=score,
         section=section,
     )

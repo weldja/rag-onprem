@@ -71,8 +71,21 @@ def select_hits(
         return []
     keyword_ids = {h.chunk_id for h in keyword_hits[:keyword_keep]}
     fused = rrf_merge([vector_hits, keyword_hits])
-    kept = [h for h in fused if h.score >= min_similarity or h.chunk_id in keyword_ids]
-    return kept[:k]
+    kept: list[RetrievedChunk] = []
+    seen_text: set[str] = set()
+    for h in fused:
+        if h.score < min_similarity and h.chunk_id not in keyword_ids:
+            continue
+        # The same text in two documents (e.g. a re-saved copy of a file) would
+        # spend two of the model's few context slots on one fact.
+        normalised = " ".join(h.text.split()).lower()
+        if normalised in seen_text:
+            continue
+        seen_text.add(normalised)
+        kept.append(h)
+        if len(kept) == k:
+            break
+    return kept
 
 
 def _columns(similarity: Any) -> list[Any]:

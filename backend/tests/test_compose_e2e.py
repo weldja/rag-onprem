@@ -90,9 +90,20 @@ def test_api_requires_sign_in() -> None:
 # ------------------------------------------------------------------ answers
 
 
+def _sample_id(client: httpx.Client) -> int:
+    docs = client.get("/api/documents").json()
+    return int(next(d["id"] for d in docs if d["filename"] == "sample.pdf"))
+
+
 def test_answer_cites_the_right_page(admin: httpx.Client) -> None:
+    # Scoped to sample.pdf: the admin also sees the eval corpus, whose handbook
+    # has identical pages, and duplicate text is only retrieved once.
     body = admin.post(
-        "/api/ask", json={"question": "How many unused days of annual leave can I carry over?"}
+        "/api/ask",
+        json={
+            "question": "How many unused days of annual leave can I carry over?",
+            "document_ids": [_sample_id(admin)],
+        },
     ).json()
     assert body["found"] is True, body
     assert "5" in body["answer"]
@@ -119,6 +130,37 @@ def test_stream_ends_with_cited_done_event(admin: httpx.Client) -> None:
     done = events[-1][1]
     assert done["found"] is True
     assert any(s["page"] == 3 for s in done["sources"])
+
+
+def test_summary_samples_across_the_document(admin: httpx.Client) -> None:
+    body = admin.post(
+        "/api/ask",
+        json={
+            "question": "Summarise sample.pdf",
+            "mode": "summary",
+            "document_ids": [_sample_id(admin)],
+            "debug": True,
+        },
+    ).json()
+    assert body["found"] is True, body
+    # The spread covers the whole handbook, not just the closest match.
+    assert {s["page"] for s in body["retrieved"]} == {1, 2, 3, 4}
+    assert all(s["document"] == "sample.pdf" for s in body["sources"])
+
+
+def test_follow_up_uses_conversation_history(admin: httpx.Client) -> None:
+    body = admin.post(
+        "/api/ask",
+        json={
+            "question": "And how many can be carried over?",
+            "history": [
+                {"role": "user", "content": "How many days of annual leave do I get?"},
+                {"role": "assistant", "content": "Full-time staff get 27 days [1]."},
+            ],
+        },
+    ).json()
+    assert body["found"] is True, body
+    assert "5" in body["answer"], body
 
 
 def test_off_topic_question_is_not_found(admin: httpx.Client) -> None:
