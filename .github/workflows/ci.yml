@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    name: Lint, types, unit tests (network disabled)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build backend test image
+        run: docker build --target dev -t rag-onprem/api:test backend
+      - name: ruff, mypy, pytest with --network none
+        run: |
+          docker run --rm --network none rag-onprem/api:test \
+            sh -c 'ruff check . && ruff format --check . && mypy && pytest -q'
+
+  frontend:
+    name: Frontend type-check and build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build web image (tsc + vite)
+        run: docker build -t rag-onprem/web:ci frontend
+      - name: Built bundle loads nothing from outside the origin
+        run: |
+          # Only XML namespace URIs and library error-message links may appear.
+          found=$(docker run --rm rag-onprem/web:ci sh -c \
+            "grep -ohE 'https?://[a-zA-Z0-9./_-]+' -r /usr/share/nginx/html | sort -u" \
+            | grep -vE '^http://www\.w3\.org/|^https://(github\.com|reactjs\.org)/' || true)
+          if [ -n "$found" ]; then echo "Unexpected URLs in bundle:"; echo "$found"; exit 1; fi
+
+  stack:
+    name: Full stack - egress check, DB tests, e2e smoke
+    needs: [unit, frontend]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free disk space for model images
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+      - name: Configure (tiny LLM: this job tests plumbing and isolation, not answer quality)
+        run: |
+          sed -e 's/^LLM_MODEL=.*/LLM_MODEL=qwen2.5:0.5b-instruct/' \
+              -e 's/^HTTP_BIND=.*/HTTP_BIND=127.0.0.1/' \
+              -e 's/^HTTP_PORT=.*/HTTP_PORT=8080/' \
+              -e 's/^HTTPS_PORT=.*/HTTPS_PORT=8443/' \
+              -e "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$(openssl rand -hex 16)/" \
+              .env.example > .env
+      - name: Start stack
+        run: bash scripts/dev-up.sh
+      - name: Egress check (backend containers must not reach the internet)
+        run: bash scripts/egress-check.sh
+      - name: Database tests (ACLs, sessions, queue)
+        run: bash scripts/test-db.sh -q
+      - name: End-to-end smoke (HTTPS, auth, uploads, ACL listing)
+        run: bash scripts/e2e.sh -k "health or redirect or sign_in"
+      - name: Release compose file is valid
+        run: |
+          RAG_VERSION=ci POSTGRES_PASSWORD=x LLM_MODEL=m EMBED_MODEL=e \
+            docker compose -f deploy/release/docker-compose.yml config -q
+      - name: Logs on failure
+        if: failure()
+        run: docker compose --env-file .env -f deploy/docker-compose.yml -f deploy/docker-compose.dev.yml logs --tail=200

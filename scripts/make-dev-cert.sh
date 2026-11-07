@@ -11,7 +11,8 @@ if [ -f "$certs/tls.crt" ] && [ "${1:-}" != "--force" ]; then
 fi
 mkdir -p "$certs"
 # The nginx image has no openssl CLI; use a throwaway Alpine container.
-docker run --rm -v "$(native_path "$certs"):/certs" alpine:3.20 sh -c '
+docker run --rm -v "$(native_path "$certs"):/certs" \
+    alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc sh -c '
     apk add --no-cache openssl >/dev/null &&
     openssl req -x509 -newkey rsa:2048 -nodes -days 825 \
         -subj "/CN=localhost" \

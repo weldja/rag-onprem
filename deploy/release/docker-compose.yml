@@ -1,0 +1,111 @@
+# rag-onprem: production stack, run from the release bundle (see README.md).
+# All images come from images.tar.gz in the bundle; nothing is ever pulled.
+#
+# Networks:
+#   backend (internal: true)  db, ollama, api, worker, proxy  - no route to the internet
+#   edge                      proxy only                      - the published ports
+name: rag-onprem
+
+x-backend-env: &backend-env
+  DATABASE_URL: postgresql+psycopg://rag:${POSTGRES_PASSWORD}@db:5432/rag
+  OLLAMA_URL: http://ollama:11434
+  LLM_MODEL: ${LLM_MODEL:?LLM_MODEL must match the bundle (see .env.example)}
+  EMBED_MODEL: ${EMBED_MODEL:?EMBED_MODEL must match the bundle}
+  EMBED_DIM: ${EMBED_DIM:-1024}
+  LLM_NUM_CTX: ${LLM_NUM_CTX:-8192}
+  CHUNK_SIZE: ${CHUNK_SIZE:-1000}
+  CHUNK_OVERLAP: ${CHUNK_OVERLAP:-150}
+  TOP_K: ${TOP_K:-6}
+  MIN_SIMILARITY: ${MIN_SIMILARITY:-0.35}
+  RERANKER_MODEL: ${RERANKER_MODEL:-}
+  RERANK_MIN_SCORE: ${RERANK_MIN_SCORE:-}
+  UPLOAD_DIR: /data/uploads
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+
+services:
+  db:
+    image: rag-onprem/pgvector:${RAG_VERSION:?Set RAG_VERSION in .env}
+    pull_policy: never
+    environment:
+      POSTGRES_DB: rag
+      POSTGRES_USER: rag
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks: [backend]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rag -d rag"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  ollama:
+    image: rag-onprem/ollama:${RAG_VERSION}
+    pull_policy: never
+    environment:
+      OLLAMA_KEEP_ALIVE: "-1"
+      OLLAMA_CONTEXT_LENGTH: ${LLM_NUM_CTX:-8192}
+      OLLAMA_NO_CLOUD: "1"
+    networks: [backend]
+    restart: unless-stopped
+
+  api:
+    image: rag-onprem/api:${RAG_VERSION}
+    pull_policy: never
+    environment: *backend-env
+    volumes:
+      - uploads:/data/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    networks: [backend]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=5).status == 200 else 1)"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 300s
+    restart: unless-stopped
+
+  worker:
+    image: rag-onprem/api:${RAG_VERSION}
+    pull_policy: never
+    entrypoint: []
+    command: ["python", "-m", "app.worker"]
+    environment: *backend-env
+    volumes:
+      - uploads:/data/uploads
+    depends_on:
+      api:
+        condition: service_healthy
+    networks: [backend]
+    restart: unless-stopped
+
+  proxy:
+    image: rag-onprem/web:${RAG_VERSION}
+    pull_policy: never
+    environment:
+      HTTPS_PORT: ${HTTPS_PORT:-443}
+    volumes:
+      - ./nginx/templates:/etc/nginx/templates:ro
+      - ./certs:/etc/nginx/certs:ro
+    ports:
+      - "${HTTP_BIND:-0.0.0.0}:${HTTP_PORT:-80}:80"
+      - "${HTTP_BIND:-0.0.0.0}:${HTTPS_PORT:-443}:443"
+    depends_on:
+      api:
+        condition: service_healthy
+    networks: [backend, edge]
+    restart: unless-stopped
+
+networks:
+  backend:
+    internal: true
+  edge: {}
+
+volumes:
+  pgdata:
+  uploads:

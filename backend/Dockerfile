@@ -1,8 +1,10 @@
 # syntax=docker/dockerfile:1
 # Dependencies are installed at build time from uv.lock; nothing is downloaded
 # when the container runs.
-FROM python:3.12-slim AS base
-COPY --from=ghcr.io/astral-sh/uv:0.8.4 /uv /bin/uv
+# Base images are pinned by digest so release builds are reproducible.
+# Update deliberately: see "Updating pinned images" in docs/operations.md.
+FROM python:3.12-slim@sha256:4840d514c583a4d3d8cad3940e68dee6f0f6f3635c12fcd0a3d74c21a5b93a54 AS base
+COPY --from=ghcr.io/astral-sh/uv:0.8.4@sha256:40775a79214294fb51d097c9117592f193bcfdfc634f4daa0e169ee965b10ef0 /uv /bin/uv
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     UV_LINK_MODE=copy \

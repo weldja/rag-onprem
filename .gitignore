@@ -65,6 +65,9 @@ deploy/offline-bundle/out/
 Thumbs.db
 desktop.ini
 
+# --- Release bundles (scripts/build-release.sh) ---
+/release/
+
 # --- Evaluation reports (summaries go in docs/eval-results.md) ---
 /eval-results/
 

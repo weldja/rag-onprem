@@ -1,0 +1,13 @@
+# NVIDIA GPU for the model runtime. install.sh enables this automatically when
+# preflight finds a GPU and the NVIDIA container runtime, by setting
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml
+# in .env. Remove that line (or set it to docker-compose.yml) to go back to CPU.
+services:
+  ollama:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

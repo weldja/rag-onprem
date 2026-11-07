@@ -1,7 +1,7 @@
 # Ollama with the LLM and embedding model baked in, so a customer install
 # needs no internet. The build machine downloads the models; the running
 # container never does. Adapted from rag-claude/ollama/Dockerfile.
-FROM ollama/ollama:0.12.3
+FROM ollama/ollama:0.12.3@sha256:c622a7adec67cf5bd7fe1802b7e26aa583a955a54e91d132889301f50c3e0bd0
 
 ARG LLM_MODEL=qwen2.5:7b-instruct
 ARG EMBED_MODEL=bge-m3
