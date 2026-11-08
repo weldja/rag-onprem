@@ -37,10 +37,14 @@ The eval user sees only the eval corpus.
 | v3 + reranker MiniLM-L6 | `294f6402d2` | 1.000 | 1.000 | 0.862 | 0.957 | 0 | 1.0 | 29.9 |
 | **prompt v5 (shipped)** | `277b9220b4` | **1.000** | **1.000** | **1.000** | **0.958** | **0** | **1.0** | 29.0 |
 | **7B: `qwen2.5:7b-instruct`, prompt v5** | `277b9220b4` | **1.000** | **1.000** | 0.964 | **1.000** | **0** | **1.0** | 44.1 |
+| 7B, Ollama 0.12.3 → 0.35.1 + GPU tuning (2026-11-08) | `277b9220b4` | 1.000 | 1.000 | 0.964 | 1.000 | 0 | 1.0 | 49.3* |
 
 The 7B row is the customer default model. It was measured on the same laptop with 13 of its 29
 layers on a 4 GB NVIDIA T500 and the rest on the CPU (`DEV_GPU=1`). Treat its latency as a
 worst case; a server GPU with 8 GB+ holds the whole model.
+
+\* Run with the laptop short of memory (0.9–1.4 GB free), so its timing isn't comparable. On this
+4 GB card the tuning doesn't change the 7B's speed (see "Latency"); quality is unchanged.
 
 The v5 run includes one more case (`carryover-days`), added after an end-to-end test exposed a
 regression that v3 caused on that phrasing. The v2 run was also affected by a duplicated corpus
@@ -92,6 +96,11 @@ model already loaded, `num_ctx` 8192:
 | `qwen2.5:3b-instruct` | 100% GPU | 203 | 14 | 9 s / 16 s | 32 s |
 | `qwen2.5:1.5b-instruct` | 100% GPU | 440 | 22 | 5 s / 8 s | 19 s |
 
+- Compared with rag-claude (Weld AI) on the same laptop: its `phi4-mini` on Ollama 0.35.1 with
+  flash attention and a 512 MiB card margin ran 91% on the GPU, 12.5 s per question and 25 s per
+  summary. Our 7B with the same runtime and tuning: 56% GPU, 30 s and 51 s, i.e. no faster. The
+  speed difference is the model fitting the card, not the settings. We adopted the runtime and
+  tuning anyway (they matter once the model fits) and kept the 7B for quality.
 - No model meets 10 s for summaries on this GPU. The 1.5B meets it for questions only, and it
   has not been through the answer-quality eval.
 - Prompt processing dominates: summaries send several times more context than questions.
