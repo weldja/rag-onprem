@@ -11,8 +11,9 @@ if [ "$#" -ne 1 ]; then
     exit 2
 fi
 
-read -rsp "Password for $1 (at least 12 characters): " password; echo
-read -rsp "Repeat password: " repeat; echo
+# IFS= keeps leading/trailing spaces: they're part of the password.
+IFS= read -rsp "Password for $1: " password; echo
+IFS= read -rsp "Repeat password: " repeat; echo
 if [ "$password" != "$repeat" ]; then
     echo "Passwords don't match" >&2
     exit 1

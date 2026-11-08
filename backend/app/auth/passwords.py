@@ -13,10 +13,9 @@ class WeakPasswordError(ValueError):
 
 
 def check_strength(password: str, min_length: int) -> None:
-    if len(password) < min_length:
-        raise WeakPasswordError(f"Password must be at least {min_length} characters")
-    if password.strip() != password:
-        raise WeakPasswordError("Password must not start or end with whitespace")
+    """Length is the only rule: any characters, including spaces, are allowed."""
+    if not password or len(password) < min_length:
+        raise WeakPasswordError(f"Password must be at least {max(min_length, 1)} characters")
 
 
 def hash_password(password: str) -> str:

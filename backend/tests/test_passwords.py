@@ -25,10 +25,36 @@ def test_garbage_hash_is_rejected_not_raised() -> None:
     assert not verify_password("not-a-hash", "x")
 
 
-@pytest.mark.parametrize("pw", ["short", " leading-space-password", "trailing-space-pass "])
-def test_weak_passwords(pw: str) -> None:
+@pytest.mark.parametrize("pw", ["", "short", "eleven-char"])
+def test_too_short_passwords(pw: str) -> None:
     with pytest.raises(WeakPasswordError):
         check_strength(pw, 12)
+
+
+@pytest.mark.parametrize(
+    "pw", [" leading-space-password", "trailing-space-pass ", "  ", "ünïcödé €😀 pass", "a\tb"]
+)
+def test_any_characters_allowed(pw: str) -> None:
+    check_strength(pw, 2)
+    assert verify_password(hash_password(pw), pw)
+
+
+def test_minimum_can_be_one_but_never_empty() -> None:
+    check_strength("x", 1)
+    with pytest.raises(WeakPasswordError):
+        check_strength("", 1)
+    with pytest.raises(WeakPasswordError):
+        check_strength("", 0)
+
+
+def test_min_length_setting_bounds() -> None:
+    from pydantic import ValidationError
+
+    from app.core.config import Settings
+
+    assert Settings(password_min_length=1).password_min_length == 1
+    with pytest.raises(ValidationError):
+        Settings(password_min_length=0)
 
 
 def test_session_tokens_are_stored_hashed() -> None:

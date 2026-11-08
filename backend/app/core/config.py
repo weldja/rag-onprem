@@ -68,7 +68,8 @@ class Settings(BaseSettings):
     session_max_days: float = Field(default=7.0, gt=0)
     login_max_failures: int = Field(default=5, gt=0)
     login_lockout_minutes: float = Field(default=5.0, gt=0)
-    password_min_length: int = Field(default=12, ge=8)
+    # 12 for customers; can be lowered to 1 (no character rules; empty is never allowed).
+    password_min_length: int = Field(default=12, ge=1)
     default_group: str = "All staff"
 
     # Directory sign-in (LDAP / Active Directory). Local accounts keep working,

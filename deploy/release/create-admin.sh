@@ -7,8 +7,9 @@ source "$(dirname "$0")/lib.sh"
 load_env
 
 if [ -t 0 ]; then
-    read -rsp "Password for $1 (at least 12 characters): " password; echo
-    read -rsp "Repeat password: " repeat; echo
+    # IFS= keeps leading/trailing spaces: they're part of the password.
+    IFS= read -rsp "Password for $1: " password; echo
+    IFS= read -rsp "Repeat password: " repeat; echo
     [ "$password" = "$repeat" ] || die "Passwords don't match"
 else
     IFS= read -r password

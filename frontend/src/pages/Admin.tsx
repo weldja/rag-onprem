@@ -57,7 +57,7 @@ export default function Admin({ me }: { me: Me }) {
     );
 
   const resetPassword = (user: User) => {
-    const password = window.prompt(`New password for ${user.username} (at least 12 characters):`);
+    const password = window.prompt(`New password for ${user.username}:`);
     if (password) void run(() => api.updateUser(user.id, { password }));
   };
 
@@ -166,7 +166,6 @@ export default function Admin({ me }: { me: Me }) {
           Initial password
           <input
             type="password"
-            minLength={12}
             value={draft.password}
             onChange={(e) => setDraft({ ...draft, password: e.target.value })}
             required

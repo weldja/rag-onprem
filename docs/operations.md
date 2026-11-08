@@ -47,6 +47,7 @@ Configuration lives in `.env`, which is readable only by its owner. After changi
 |---|---|
 | `HTTP_BIND`, `HTTP_PORT`, `HTTPS_PORT` | where the web interface listens |
 | `MIN_SIMILARITY`, `TOP_K`, `CHUNK_SIZE`, `CHUNK_OVERLAP` | retrieval tuning (defaults were chosen by evaluation) |
+| `PASSWORD_MIN_LENGTH` | minimum length of local passwords (default 12, lowest 1). Any characters are allowed, including spaces. Lowering it makes passwords easier to guess. |
 | `LLM_MODEL`, `EMBED_MODEL`, `RAG_VERSION` | set by the bundle. Don't change them; the models are built into the images. |
 
 ## 3. Daily use

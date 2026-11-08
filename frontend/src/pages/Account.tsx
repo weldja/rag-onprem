@@ -51,11 +51,10 @@ export default function Account({ me }: { me: Me }) {
           />
         </label>
         <label>
-          New password (at least 12 characters)
+          New password
           <input
             type="password"
             autoComplete="new-password"
-            minLength={12}
             value={next}
             onChange={(e) => setNext(e.target.value)}
             required
