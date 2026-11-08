@@ -115,6 +115,10 @@ Apply these whenever you add the matching component:
   `.env.example` committed and `.env` git-ignored.
 - Model names, embedding dimension, chunk sizes, top-k, and the Ollama URL are configuration, never hard-coded.
 - Defaults must work for a CPU-only server. GPU is an opt-in compose profile (`--profile gpu`).
+- **Response-time target: answers within 10 seconds.** That needs the whole 7B model on an NVIDIA
+  GPU with 8 GB+ (decided 2026-11-08; measurements in `docs/eval-results.md`, "Latency"). CPU and
+  smaller GPUs still work, slowly; preflight warns about them. Don't trade answer quality for speed
+  (e.g. a smaller model) without running the eval.
 
 ## Development environment (Windows 11 + Git Bash)
 

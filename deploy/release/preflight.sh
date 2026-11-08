@@ -82,20 +82,24 @@ for port in "$http_port" "$https_port"; do
 done
 
 # --- GPU --------------------------------------------------------------------
+# Answers within 10 seconds need the whole model in GPU memory: an NVIDIA GPU
+# with 8 GB+. Anything less still works, just slowly, so these are warnings.
+fast_gpu="an NVIDIA GPU with 8 GB+ is needed for answers within 10 seconds"
 gpu=0
 if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
     if docker info 2>/dev/null | grep -qi 'nvidia'; then
         ok "NVIDIA GPU with container runtime: $(nvidia-smi -L | head -1)"
         gpu=1
         vram_mb="$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -dc 0-9 || true)"
-        if [ -n "$vram_mb" ] && [ "$vram_mb" -lt 6000 ]; then
-            warn "GPU has only $((vram_mb / 1024)) GB of memory: part of the model will run on the CPU (8 GB+ recommended)"
+        # 7500, not 8192: 8 GB cards report slightly less than 8192 MiB.
+        if [ -n "$vram_mb" ] && [ "$vram_mb" -lt 7500 ]; then
+            warn "GPU has only $((vram_mb / 1024)) GB of memory: part of the model will run on the CPU, so answers take 30 seconds or more ($fast_gpu)"
         fi
     else
-        warn "NVIDIA GPU found but the NVIDIA Container Toolkit isn't configured for Docker; using CPU"
+        warn "NVIDIA GPU found but the NVIDIA Container Toolkit isn't configured for Docker; using CPU, so answers take 20-60 seconds or more ($fast_gpu)"
     fi
 else
-    ok "no NVIDIA GPU: running on CPU"
+    warn "no NVIDIA GPU: running on CPU, so answers take 20-60 seconds or more ($fast_gpu)"
 fi
 
 echo

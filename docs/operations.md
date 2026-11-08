@@ -8,16 +8,24 @@ Run all commands from the bundle folder, as a user allowed to run Docker.
 
 ## 1. Requirements
 
-| | Minimum | Recommended |
+| | Minimum (works, slowly) | Required for answers within 10 seconds |
 |---|---|---|
 | OS | 64-bit Linux with Docker Engine 24+ and the Compose v2 plugin | Ubuntu 22.04/24.04 LTS, RHEL 9 |
 | CPU | 4 cores with AVX2 | 8+ cores |
 | RAM | 12 GB | 16 GB+ |
 | Disk | 25 GB free for Docker | 40 GB+, plus room for documents and backups |
-| GPU | none | NVIDIA with 8 GB+ VRAM and the NVIDIA Container Toolkit |
+| GPU | none | **NVIDIA with 8 GB+ VRAM** and the NVIDIA Container Toolkit |
 | Network | ports 80 and 443 reachable from staff PCs | a DNS name and a certificate for it |
 
-Without a GPU, answers typically take 20–60 seconds. With a supported GPU, they take a few seconds.
+**Response time depends on the GPU.** The model must fit entirely in GPU memory to answer quickly:
+
+- **NVIDIA GPU with 8 GB+:** the whole model runs on the GPU. This is the configuration for
+  answers within 10 seconds.
+- **Smaller GPU (e.g. 4 GB):** part of the model runs on the CPU. Questions take around
+  30 seconds and document summaries a few minutes.
+- **No GPU:** questions take 20–60 seconds or more, and summaries several minutes.
+
+Answers stream as they're written, so the first words appear before the answer is complete.
 
 `bash preflight.sh` checks all of this and changes nothing.
 

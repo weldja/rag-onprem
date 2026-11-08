@@ -77,6 +77,27 @@ regression that v3 caused on that phrasing. The v2 run was also affected by a du
    - It's available as an option (`RERANKER_MODEL`). Worth re-testing with a table-aware or
      multilingual cross-encoder, if memory allows.
 
+## Latency (2026-11-08, development laptop, NVIDIA T500 4 GB)
+
+**Target: answers within 10 seconds.** Decision: keep the 7B model for quality and make an NVIDIA
+GPU with 8 GB+ the requirement for that target (`docs/operations.md`, preflight warnings). A CPU or
+a 4 GB GPU still works, slowly.
+
+Measured with synthetic RAG-sized prompts (unique per run, so Ollama's prompt cache doesn't help),
+model already loaded, `num_ctx` 8192:
+
+| Model | Placement | Prompt tok/s | Output tok/s | Question (~1,400 tok): first word / total | Summary (~3,500 tok): total |
+|---|---|---|---|---|---|
+| `qwen2.5:7b-instruct` | 45% CPU / 55% GPU | 71 | 6 | 20 s / 30 s | ~2–3 min (one real summary: 2 min 45 s) |
+| `qwen2.5:3b-instruct` | 100% GPU | 203 | 14 | 9 s / 16 s | 32 s |
+| `qwen2.5:1.5b-instruct` | 100% GPU | 440 | 22 | 5 s / 8 s | 19 s |
+
+- No model meets 10 s for summaries on this GPU. The 1.5B meets it for questions only, and it
+  has not been through the answer-quality eval.
+- Prompt processing dominates: summaries send several times more context than questions.
+- Not yet measured: the 7B entirely on an 8 GB+ GPU. Measure it on the first customer-class GPU
+  and record it here, for both a question and a summary.
+
 ## Before changing prompts or retrieval
 
 1. Run `bash scripts/eval.sh --detach --label <change>` and compare with the last shipped run.
