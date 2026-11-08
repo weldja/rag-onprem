@@ -40,7 +40,12 @@ The eval user sees only the eval corpus.
 | 7B, Ollama 0.12.3 → 0.35.1 + GPU tuning (2026-11-08) | `277b9220b4` | 1.000 | 1.000 | 0.964 | 1.000 | 0 | 1.0 | 49.3* |
 | `phi4-mini`, small-GPU settings† | `277b9220b4` | 1.000 | 0.875 | 0.958 | 1.000 | 0 | 0.75 | 17.7 |
 | `phi4-mini`, small-GPU settings† + `EMBED_NUM_GPU=0` | `277b9220b4` | 1.000 | 0.917 | 0.960 | 1.000 | 0 | 0.75 | 4.3 |
-| **7B, small-GPU settings† + `EMBED_NUM_GPU=0` (shipped for small GPUs)** | `277b9220b4` | **1.000** | **1.000** | 0.964 | **1.000** | **0** | **1.0** | **9.9** |
+| 7B, small-GPU settings† + `EMBED_NUM_GPU=0` | `277b9220b4` | 1.000 | 1.000 | 0.964 | 1.000 | 0 | 1.0 | 9.9 |
+| **`qwen3:4b-instruct-2507-q4_K_M`, small-GPU settings† + `EMBED_NUM_GPU=0` (small-GPU bundle)** | `277b9220b4` | **1.000** | **1.000** | 0.963 | **1.000** | **0** | **1.0** | **5.4** |
+
+Summary cases (`summary_of` in `cases.json`, added 2026-11-08): Qwen3 4B cited and accurate 2/2,
+median 22 s. In an earlier hand check one of its two summaries was accurate but uncited, so summary
+citations vary a little between runs; the eval now tracks `summary_cited`.
 
 † `LLM_NUM_CTX=4096`, `LLM_MAX_TOKENS=768`, `SUMMARY_CHUNKS=6`, as `install.sh` sets on a GPU under
 6 GB. `phi4-mini` is faster but leaves some answers uncited and answered one question the documents
@@ -123,6 +128,10 @@ model already loaded, `num_ctx` 8192:
 
   `install.sh` applies these settings on a GPU under 6 GB. The 7B now meets 10 s (median) for
   questions on a 4 GB card; summaries still take ~35 s there.
+- **Small-GPU bundle: `qwen3:4b-instruct-2507` (Apache 2.0).** It fits a 4 GB card (90% GPU) and
+  matched the 7B on every eval metric: 5.4 s median per question, 22 s per summary. Built with
+  `RELEASE_LLM_MODEL=qwen3:4b-instruct-2507-q4_K_M`. The 7B stays the default for 8 GB+ GPUs.
+  `qwen2.5:3b` was not considered: its licence doesn't allow commercial use.
 - Not yet measured: the 7B entirely on an 8 GB+ GPU. Measure it on the first customer-class GPU
   and record it here, for both a question and a summary.
 

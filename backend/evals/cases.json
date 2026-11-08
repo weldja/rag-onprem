@@ -67,5 +67,9 @@
   {"id": "off-topic", "question": "What is the capital of Peru?", "expect_found": false},
   {"id": "paternity-leave", "question": "How many days of paternity leave do I get?", "expect_found": false},
   {"id": "remote-abroad", "question": "Can I work remotely from another country?", "expect_found": false},
-  {"id": "ceo-salary", "question": "What is the CEO's salary?", "expect_found": false}
+  {"id": "ceo-salary", "question": "What is the CEO's salary?", "expect_found": false},
+  {"id": "summary-it-security", "question": "Summarise this document.", "summary_of": "it-security-policy.docx",
+   "expect": [{"document": "it-security-policy.docx"}], "answer_any": [["14"], ["encrypt"]]},
+  {"id": "summary-handbook", "question": "Summarise this document.", "summary_of": "northwind-handbook-2026.pdf",
+   "expect": [{"document": "northwind-handbook-2026.pdf"}], "answer_any": [["27"], ["31 March"]]}
 ]

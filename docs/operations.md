@@ -21,9 +21,12 @@ Run all commands from the bundle folder, as a user allowed to run Docker.
 
 - **NVIDIA GPU with 8 GB+:** the whole model runs on the GPU. This is the configuration for
   answers within 10 seconds.
-- **Smaller GPU (e.g. 4 GB):** part of the model runs on the CPU. The installer then applies
-  small-GPU settings (`LLM_NUM_CTX=4096`, `LLM_MAX_TOKENS=768`, `EMBED_NUM_GPU=0`). Measured on a
-  4 GB card: questions about 10 seconds, document summaries about 35 seconds.
+- **Smaller GPU (e.g. 4 GB):** ask for the **small-GPU bundle**, which uses a smaller model
+  (Qwen3 4B) that fits the card. Measured on a 4 GB card: questions about 5 seconds, document
+  summaries about 22 seconds, with the same answer quality in our evaluation. The standard bundle
+  also works on such a card (questions about 10 seconds, summaries about 35 seconds). Either way
+  the installer applies small-GPU settings (`LLM_NUM_CTX=4096`, `LLM_MAX_TOKENS=768`,
+  `EMBED_NUM_GPU=0`). The `VERSION` file shows which model a bundle contains (`llm_model`).
 - **No GPU:** questions take 20–60 seconds or more, and summaries several minutes.
 
 Answers stream as they're written, so the first words appear before the answer is complete.

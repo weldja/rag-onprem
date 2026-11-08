@@ -11,6 +11,9 @@ Metrics (answerable cases unless noted):
   answer_accuracy    every expected fact (any of its spellings) is in the answer
   false_not_found    answerable, but the system said it couldn't find it
   abstention         unanswerable cases correctly answered "not found"
+  summary_cited      summary cases ("summary_of") that cite the summarised document
+  summary_accuracy   summary cases that contain every expected fact
+Summary cases are kept out of the question metrics above.
 """
 
 import argparse
@@ -50,6 +53,7 @@ class CaseResult:
     answer: str = ""
     cited_sources: list[str] = field(default_factory=list)
     retrieved_sources: list[str] = field(default_factory=list)  # [n] order, for diagnosis
+    summary: bool = False
 
 
 def _client(base: str) -> httpx.Client:
@@ -132,13 +136,19 @@ def setup(admin: httpx.Client, corpus_dir: Path) -> str:
     return password
 
 
-def run_case(client: httpx.Client, case: dict[str, Any]) -> tuple[CaseResult, str | None]:
+def run_case(
+    client: httpx.Client, case: dict[str, Any], doc_ids: dict[str, int] | None = None
+) -> tuple[CaseResult, str | None]:
     """Ask one case; returns its result and the server's prompt version."""
+    payload: dict[str, Any] = {
+        "question": case["question"],
+        "history": case.get("history", []),
+        "debug": True,
+    }
+    if "summary_of" in case:
+        payload |= {"mode": "summary", "document_ids": [(doc_ids or {})[case["summary_of"]]]}
     started = time.monotonic()
-    resp = client.post(
-        "/api/ask",
-        json={"question": case["question"], "history": case.get("history", []), "debug": True},
-    )
+    resp = client.post("/api/ask", json=payload)
     resp.raise_for_status()
     body = resp.json()
     elapsed = time.monotonic() - started
@@ -151,6 +161,7 @@ def run_case(client: httpx.Client, case: dict[str, Any]) -> tuple[CaseResult, st
         answer=body["answer"],
         cited_sources=[f"[{s['id']}] {_label(s)}" for s in body["sources"]],
         retrieved_sources=[f"[{s['id']}] {_label(s)}" for s in body.get("retrieved", [])],
+        summary="summary_of" in case,
     )
     version = body.get("prompt_version")
     if not answerable:
@@ -169,8 +180,9 @@ def run_case(client: httpx.Client, case: dict[str, Any]) -> tuple[CaseResult, st
 
 
 def summarise(results: list[CaseResult]) -> dict[str, float]:
-    ans = [r for r in results if r.answerable]
+    ans = [r for r in results if r.answerable and not r.summary]
     un = [r for r in results if not r.answerable]
+    summ = [r for r in results if r.summary]
 
     def rate(xs: list[bool]) -> float:
         return round(sum(xs) / len(xs), 3) if xs else 0.0
@@ -187,8 +199,16 @@ def summarise(results: list[CaseResult]) -> dict[str, float]:
         "answer_accuracy": rate([r.answer_correct for r in ans]),
         "false_not_found": rate([not r.found for r in ans]),
         "abstention": rate([not r.found for r in un]),
-        "median_seconds": round(statistics.median(r.seconds for r in results), 2),
-        "max_seconds": max(r.seconds for r in results),
+        "median_seconds": round(statistics.median(r.seconds for r in ans + un), 2)
+        if ans + un
+        else 0.0,
+        "max_seconds": max((r.seconds for r in ans + un), default=0.0),
+        "summary_cases": len(summ),
+        "summary_cited": rate([r.citation_hit for r in summ]),
+        "summary_accuracy": rate([r.answer_correct for r in summ]),
+        "summary_median_seconds": round(statistics.median(r.seconds for r in summ), 2)
+        if summ
+        else 0.0,
     }
 
 
@@ -210,10 +230,11 @@ def main() -> int:
         password = setup(admin, Path(tmp))
     user = _login(args.base, USER, password)
 
+    doc_ids = {d["filename"]: d["id"] for d in user.get("/api/documents").json()}
     results: list[CaseResult] = []
     prompt_version = None
     for case in cases:
-        result, prompt_version = run_case(user, case)
+        result, prompt_version = run_case(user, case, doc_ids)
         results.append(result)
         mark = (
             ("ok " if result.answer_correct else "BAD")

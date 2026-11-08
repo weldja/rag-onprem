@@ -124,6 +124,9 @@ Apply these whenever you add the matching component:
   to a 9.9 s median. `install.sh` sets it, with `LLM_NUM_CTX=4096` and `LLM_MAX_TOKENS=768`, on
   cards under 6 GB. Check placement with `ollama ps` and timings with the api's "answer timing"
   log line.
+- **Two bundles:** the standard one (7B, for 8 GB+ GPUs) and a small-GPU one with
+  `qwen3:4b-instruct-2507` (Apache 2.0), which fits a 4 GB card and matched the 7B on the eval at
+  ~5 s per question. Any model change needs the full eval, including the summary cases.
 
 ## Development environment (Windows 11 + Git Bash)
 
@@ -159,7 +162,7 @@ bash scripts/make-dev-cert.sh           # self-signed cert for dev (dev-up.sh ru
 bash scripts/eval.sh --detach --label X # answer-quality eval (~15 min), JSON report in eval-results/
 bash scripts/retrieval-probe.sh         # what each eval question retrieves, with scores; no LLM
 bash scripts/build-release.sh 1.0.0     # offline bundle in release/ (customer default models from .env.example)
-RELEASE_LLM_MODEL=qwen2.5:3b-instruct bash scripts/build-release.sh 1.0.0-test   # smaller test bundle
+RELEASE_LLM_MODEL=qwen3:4b-instruct-2507-q4_K_M bash scripts/build-release.sh 1.0.0-small   # small-GPU bundle (< 8 GB)
 bash scripts/egress-check.sh            # api/ollama/db must NOT reach the internet
 ```
 

@@ -55,3 +55,26 @@ def test_matching_and_summary() -> None:
     assert m["false_not_found"] == 0.5
     assert m["abstention"] == 1.0
     assert m["median_seconds"] == 2.0
+    assert m["summary_cases"] == 0
+
+
+def test_summary_cases_are_scored_separately() -> None:
+    results = [
+        CaseResult("q", True, True, True, True, 1, 1, True, 4.0),
+        CaseResult("s1", True, True, True, True, 3, 3, True, 20.0, summary=True),
+        CaseResult("s2", True, True, True, False, 0, 0, True, 30.0, summary=True),
+    ]
+    m = summarise(results)
+    assert m["answerable_cases"] == 1 and m["citation_recall"] == 1.0  # summaries excluded
+    assert m["median_seconds"] == 4.0
+    assert m["summary_cases"] == 2
+    assert m["summary_cited"] == 0.5
+    assert m["summary_accuracy"] == 1.0
+    assert m["summary_median_seconds"] == 25.0
+
+
+def test_summary_cases_name_a_corpus_document(tmp_path: Path) -> None:
+    names = {p.name for p in build(tmp_path)}
+    for case in CASES:
+        if "summary_of" in case:
+            assert case["summary_of"] in names, case["id"]
