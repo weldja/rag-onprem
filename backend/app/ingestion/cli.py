@@ -44,6 +44,7 @@ def main(argv: list[str] | None = None) -> int:
         llm_model=settings.llm_model,
         embed_model=settings.embed_model,
         timeout_s=settings.llm_timeout_s,
+        embed_num_gpu=settings.embed_num_gpu,
     )
     engine = get_engine()
     max_bytes = settings.max_upload_mb * 1024 * 1024

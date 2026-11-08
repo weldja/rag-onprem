@@ -26,6 +26,8 @@ def get_ollama() -> OllamaClient:
         embed_model=s.embed_model,
         timeout_s=s.llm_timeout_s,
         num_ctx=s.llm_num_ctx,
+        max_tokens=s.llm_max_tokens,
+        embed_num_gpu=s.embed_num_gpu,
         temperature=s.llm_temperature,
     )
 

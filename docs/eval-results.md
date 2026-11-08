@@ -38,6 +38,13 @@ The eval user sees only the eval corpus.
 | **prompt v5 (shipped)** | `277b9220b4` | **1.000** | **1.000** | **1.000** | **0.958** | **0** | **1.0** | 29.0 |
 | **7B: `qwen2.5:7b-instruct`, prompt v5** | `277b9220b4` | **1.000** | **1.000** | 0.964 | **1.000** | **0** | **1.0** | 44.1 |
 | 7B, Ollama 0.12.3 → 0.35.1 + GPU tuning (2026-11-08) | `277b9220b4` | 1.000 | 1.000 | 0.964 | 1.000 | 0 | 1.0 | 49.3* |
+| `phi4-mini`, small-GPU settings† | `277b9220b4` | 1.000 | 0.875 | 0.958 | 1.000 | 0 | 0.75 | 17.7 |
+| `phi4-mini`, small-GPU settings† + `EMBED_NUM_GPU=0` | `277b9220b4` | 1.000 | 0.917 | 0.960 | 1.000 | 0 | 0.75 | 4.3 |
+| **7B, small-GPU settings† + `EMBED_NUM_GPU=0` (shipped for small GPUs)** | `277b9220b4` | **1.000** | **1.000** | 0.964 | **1.000** | **0** | **1.0** | **9.9** |
+
+† `LLM_NUM_CTX=4096`, `LLM_MAX_TOKENS=768`, `SUMMARY_CHUNKS=6`, as `install.sh` sets on a GPU under
+6 GB. `phi4-mini` is faster but leaves some answers uncited and answered one question the documents
+don't cover, so it isn't shipped. The 7B's speed-up came from `EMBED_NUM_GPU=0` (see "Latency").
 
 The 7B row is the customer default model. It was measured on the same laptop with 13 of its 29
 layers on a 4 GB NVIDIA T500 and the rest on the CPU (`DEV_GPU=1`). Treat its latency as a
@@ -101,9 +108,21 @@ model already loaded, `num_ctx` 8192:
   summary. Our 7B with the same runtime and tuning: 56% GPU, 30 s and 51 s, i.e. no faster. The
   speed difference is the model fitting the card, not the settings. We adopted the runtime and
   tuning anyway (they matter once the model fits) and kept the 7B for quality.
-- No model meets 10 s for summaries on this GPU. The 1.5B meets it for questions only, and it
-  has not been through the answer-quality eval.
-- Prompt processing dominates: summaries send several times more context than questions.
+- **The real cause (found later the same day, from the per-answer timing log):** the card can't
+  hold the LLM and `bge-m3` together, so Ollama evicted one to load the other on *every*
+  question: 4–11 s of search time plus reloading the LLM. rag-claude never hit this because it
+  embeds on the CPU. `EMBED_NUM_GPU=0` keeps `bge-m3` on the CPU (a question embeds in ~0.1 s)
+  and the LLM stays loaded. With it, plus `LLM_NUM_CTX=4096`, `LLM_MAX_TOKENS=768` and
+  `SUMMARY_CHUNKS=6` (summaries read 6 excerpts, as rag-claude does on-prem), measured in the eval
+  on this laptop:
+
+  | Model | Median per question | Summary (2 docs) | Quality |
+  |---|---|---|---|
+  | `qwen2.5:7b-instruct` | **9.9 s** (max 25.8 s, the first) | 33–36 s, cited | unchanged (all 1.000) |
+  | `phi4-mini` | 4.3 s | 18–24 s, one uncited | citation recall 0.917, abstention 0.75 |
+
+  `install.sh` applies these settings on a GPU under 6 GB. The 7B now meets 10 s (median) for
+  questions on a 4 GB card; summaries still take ~35 s there.
 - Not yet measured: the 7B entirely on an 8 GB+ GPU. Measure it on the first customer-class GPU
   and record it here, for both a question and a summary.
 

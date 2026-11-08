@@ -61,6 +61,7 @@ def main() -> None:
         llm_model=settings.llm_model,
         embed_model=settings.embed_model,
         timeout_s=settings.llm_timeout_s,
+        embed_num_gpu=settings.embed_num_gpu,
     )
     stopping = False
 

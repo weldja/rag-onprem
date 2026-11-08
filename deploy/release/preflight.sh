@@ -93,7 +93,7 @@ if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
         vram_mb="$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -dc 0-9 || true)"
         # 7500, not 8192: 8 GB cards report slightly less than 8192 MiB.
         if [ -n "$vram_mb" ] && [ "$vram_mb" -lt 7500 ]; then
-            warn "GPU has only $((vram_mb / 1024)) GB of memory: part of the model will run on the CPU, so answers take 30 seconds or more ($fast_gpu)"
+            warn "GPU has only $((vram_mb / 1024)) GB of memory: part of the model runs on the CPU (questions about 10 seconds, summaries about 35 seconds on a 4 GB card; install.sh applies small-GPU settings)"
         fi
     else
         warn "NVIDIA GPU found but the NVIDIA Container Toolkit isn't configured for Docker; using CPU, so answers take 20-60 seconds or more ($fast_gpu)"
@@ -108,5 +108,6 @@ if [ "$problems" -gt 0 ]; then
 else
     printf '%s\n' "${GREEN}Ready.${RESET}"
 fi
+echo "VRAM_MB=${vram_mb:-0}"
 echo "GPU=$gpu"
 [ "$problems" -eq 0 ]

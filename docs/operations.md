@@ -21,8 +21,9 @@ Run all commands from the bundle folder, as a user allowed to run Docker.
 
 - **NVIDIA GPU with 8 GB+:** the whole model runs on the GPU. This is the configuration for
   answers within 10 seconds.
-- **Smaller GPU (e.g. 4 GB):** part of the model runs on the CPU. Questions take around
-  30 seconds and document summaries a few minutes.
+- **Smaller GPU (e.g. 4 GB):** part of the model runs on the CPU. The installer then applies
+  small-GPU settings (`LLM_NUM_CTX=4096`, `LLM_MAX_TOKENS=768`, `EMBED_NUM_GPU=0`). Measured on a
+  4 GB card: questions about 10 seconds, document summaries about 35 seconds.
 - **No GPU:** questions take 20–60 seconds or more, and summaries several minutes.
 
 Answers stream as they're written, so the first words appear before the answer is complete.
@@ -55,6 +56,8 @@ Configuration lives in `.env`, which is readable only by its owner. After changi
 |---|---|
 | `HTTP_BIND`, `HTTP_PORT`, `HTTPS_PORT` | where the web interface listens |
 | `MIN_SIMILARITY`, `TOP_K`, `CHUNK_SIZE`, `CHUNK_OVERLAP` | retrieval tuning (defaults were chosen by evaluation) |
+| `LLM_MAX_TOKENS`, `SUMMARY_CHUNKS` | longest answer in tokens (default 1024) and excerpts a document summary reads (default 6). Higher values give fuller answers and summaries but take longer. |
+| `EMBED_NUM_GPU`, `LLM_NUM_CTX` | `0` keeps the search model on the CPU so it never displaces the answer model on a small GPU; context window of the answer model. Set automatically on a GPU under 6 GB. |
 | `PASSWORD_MIN_LENGTH` | minimum length of local passwords (default 12, lowest 1). Any characters are allowed, including spaces. Lowering it makes passwords easier to guess. |
 | `LLM_MODEL`, `EMBED_MODEL`, `RAG_VERSION` | set by the bundle. Don't change them; the models are built into the images. |
 

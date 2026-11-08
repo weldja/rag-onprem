@@ -14,7 +14,8 @@ if ! preflight_out="$(bash ./preflight.sh)"; then
 else
     printf '%s\n' "$preflight_out"
 fi
-gpu="$(printf '%s\n' "$preflight_out" | tail -1 | sed -n 's/^GPU=//p')"
+gpu="$(printf '%s\n' "$preflight_out" | sed -n 's/^GPU=//p' | tail -1)"
+vram_mb="$(printf '%s\n' "$preflight_out" | sed -n 's/^VRAM_MB=//p' | tail -1)"
 
 info "Verifying bundle checksums"
 verify_checksums .
@@ -32,6 +33,15 @@ else
     set_env POSTGRES_PASSWORD "$(random_secret 32)"
     chmod 600 .env
     ok "created .env with a random database password"
+    # A card under 6 GB only holds the model with a smaller context window and a
+    # shorter answer limit (tested on a 4 GB NVIDIA T500). Only on a new .env, so
+    # values an administrator has set are never replaced.
+    if [ "$gpu" = 1 ] && [ "${vram_mb:-0}" -gt 0 ] && [ "${vram_mb:-0}" -lt 6000 ]; then
+        set_env LLM_NUM_CTX 4096
+        set_env LLM_MAX_TOKENS 768
+        set_env EMBED_NUM_GPU 0
+        ok "small GPU ($((vram_mb / 1024)) GB): LLM_NUM_CTX=4096, LLM_MAX_TOKENS=768, EMBED_NUM_GPU=0"
+    fi
 fi
 if [ "$gpu" = 1 ]; then
     # Explicit separator: Compose defaults to ';' on Windows and ':' elsewhere.

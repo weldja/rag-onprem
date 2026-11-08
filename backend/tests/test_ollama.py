@@ -3,6 +3,7 @@ import json
 import httpx
 import pytest
 
+from app.llm.base import ChatMessage
 from app.llm.ollama import OllamaClient, OllamaError, model_matches
 
 
@@ -26,6 +27,60 @@ def test_chat_posts_native_api_and_returns_content() -> None:
     body = seen["body"]
     assert isinstance(body, dict)
     assert body["model"] == "qwen:7b" and body["stream"] is False
+
+
+def test_answer_length_limit_is_sent_only_when_set() -> None:
+    bodies: list[dict[str, object]] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(req.content))
+        if bodies[-1]["stream"]:
+            return httpx.Response(200, content=_ndjson({"message": {"content": "x"}, "done": True}))
+        return httpx.Response(200, json={"message": {"role": "assistant", "content": "x"}})
+
+    msgs: list[ChatMessage] = [{"role": "user", "content": "q"}]
+    limited = OllamaClient(
+        "http://o:11434",
+        llm_model="m",
+        embed_model="e",
+        max_tokens=768,
+        num_ctx=4096,
+        transport=httpx.MockTransport(handler),
+    )
+    limited.chat(msgs)
+    list(limited.chat_stream(msgs))
+    make_client(httpx.MockTransport(handler)).chat(msgs)
+    assert [b["options"] for b in bodies[:2]] == [
+        {"temperature": 0.1, "num_ctx": 4096, "num_predict": 768}
+    ] * 2
+    assert "num_predict" not in bodies[2]["options"]  # type: ignore[operator]
+
+
+def test_embed_can_be_pinned_to_cpu() -> None:
+    bodies: list[dict[str, object]] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(req.content))
+        return httpx.Response(200, json={"embeddings": [[0.1, 0.2]]})
+
+    cpu = OllamaClient(
+        "http://o:11434",
+        llm_model="m",
+        embed_model="e",
+        embed_num_gpu=0,
+        transport=httpx.MockTransport(handler),
+    )
+    cpu.embed(["q"])
+    make_client(httpx.MockTransport(handler)).embed(["q"])
+    assert bodies[0]["options"] == {"num_gpu": 0}
+    assert "options" not in bodies[1]  # default: Ollama decides
+
+
+def test_embed_num_gpu_setting() -> None:
+    from app.core.config import Settings
+
+    assert Settings().embed_num_gpu is None
+    assert Settings(embed_num_gpu=0).embed_num_gpu == 0
 
 
 def _ndjson(*objs: dict[str, object]) -> bytes:

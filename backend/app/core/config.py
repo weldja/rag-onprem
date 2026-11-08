@@ -16,7 +16,14 @@ class Settings(BaseSettings):
     llm_model: str = "qwen2.5:7b-instruct"
     embed_model: str = "bge-m3"
     embed_dim: int = Field(default=1024, gt=0, le=2000)  # HNSW limit is 2000
+    # GPU layers for the embedding model. Empty = Ollama decides. 0 = CPU only:
+    # on a small card the LLM and embedding model can't both fit, and Ollama then
+    # swaps them on every question (5-10 s each, measured on a 4 GB card).
+    embed_num_gpu: int | None = Field(default=None, ge=0)
     llm_num_ctx: int = Field(default=8192, gt=0)
+    # Longest answer, in tokens (~750 words per 1000). Bounds the time a summary
+    # can run on a slow machine; as in rag-claude. 0 = no limit.
+    llm_max_tokens: int = Field(default=1024, ge=0)
     llm_temperature: float = 0.1
     llm_timeout_s: float = Field(default=600.0, gt=0)
 
@@ -57,7 +64,10 @@ class Settings(BaseSettings):
 
     # Conversation and summaries
     history_turns: int = Field(default=1, ge=0, le=5)  # previous exchanges sent to the LLM
-    summary_chunks: int = Field(default=12, gt=0, le=40)  # sampled per summary request
+    # Sampled per summary request. Every excerpt adds to the wait before the
+    # first word, so a summary reads as many as a question (TOP_K), as rag-claude
+    # does on-prem. Raise it for fuller summaries on a fast GPU.
+    summary_chunks: int = Field(default=6, gt=0, le=40)
 
     # How long the API waits at startup for its models to appear in Ollama.
     startup_wait_s: float = Field(default=120.0, ge=0)

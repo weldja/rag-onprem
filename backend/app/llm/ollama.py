@@ -38,14 +38,20 @@ class OllamaClient:
         embed_model: str,
         timeout_s: float = 600.0,
         num_ctx: int = 8192,
+        max_tokens: int = 0,
         temperature: float = 0.1,
+        embed_num_gpu: int | None = None,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.llm_model = llm_model
         self._embed_model = embed_model
-        self._num_ctx = num_ctx
-        self._temperature = temperature
+        self._embed_options: dict[str, Any] = (
+            {} if embed_num_gpu is None else {"num_gpu": embed_num_gpu}
+        )
+        self._options: dict[str, Any] = {"temperature": temperature, "num_ctx": num_ctx}
+        if max_tokens > 0:
+            self._options["num_predict"] = max_tokens
         # trust_env=False: ignore HTTP(S)_PROXY and friends, so a proxy setting
         # on the host can never route model traffic off the server.
         self._http = httpx.Client(
@@ -84,7 +90,7 @@ class OllamaClient:
                 "model": self.llm_model,
                 "messages": messages,
                 "stream": False,
-                "options": {"temperature": self._temperature, "num_ctx": self._num_ctx},
+                "options": self._options,
             },
         )
         content = (data.get("message") or {}).get("content")
@@ -99,7 +105,7 @@ class OllamaClient:
             "model": self.llm_model,
             "messages": messages,
             "stream": True,
-            "options": {"temperature": self._temperature, "num_ctx": self._num_ctx},
+            "options": self._options,
         }
         try:
             with self._http.stream("POST", "/api/chat", json=payload) as resp:
@@ -131,9 +137,10 @@ class OllamaClient:
     def embed(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
-        data = self._request(
-            "POST", "/api/embed", {"model": self._embed_model, "input": texts, "truncate": True}
-        )
+        payload: dict[str, Any] = {"model": self._embed_model, "input": texts, "truncate": True}
+        if self._embed_options:
+            payload["options"] = self._embed_options
+        data = self._request("POST", "/api/embed", payload)
         vectors = data.get("embeddings")
         if not isinstance(vectors, list) or len(vectors) != len(texts):
             raise OllamaError(

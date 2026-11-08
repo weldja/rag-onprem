@@ -118,7 +118,12 @@ Apply these whenever you add the matching component:
 - **Response-time target: answers within 10 seconds.** That needs the whole 7B model on an NVIDIA
   GPU with 8 GB+ (decided 2026-11-08; measurements in `docs/eval-results.md`, "Latency"). CPU and
   smaller GPUs still work, slowly; preflight warns about them. Don't trade answer quality for speed
-  (e.g. a smaller model) without running the eval.
+  (e.g. a smaller model) without running the eval: `phi4-mini` was tried and dropped citations.
+- **On a GPU that can't hold both models, keep the embedding model on the CPU (`EMBED_NUM_GPU=0`)**,
+  or Ollama swaps the LLM out on every question. That alone took the 7B on a 4 GB card from ~30 s
+  to a 9.9 s median. `install.sh` sets it, with `LLM_NUM_CTX=4096` and `LLM_MAX_TOKENS=768`, on
+  cards under 6 GB. Check placement with `ollama ps` and timings with the api's "answer timing"
+  log line.
 
 ## Development environment (Windows 11 + Git Bash)
 
