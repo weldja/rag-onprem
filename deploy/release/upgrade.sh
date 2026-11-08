@@ -53,11 +53,23 @@ for key in LLM_MODEL EMBED_MODEL EMBED_DIM RERANKER_MODEL OCR_IMAGE_LANGUAGES; d
     set_env "$key" "$(sed -n "s/^${key}=//p" .env.example)"
 done
 
+old_version="$RAG_VERSION"
+# load_env exported the OLD values, and Compose prefers the environment over
+# .env, so re-read .env or `up` would quietly restart the old version.
+load_env
+[ "$RAG_VERSION" = "$new_version" ] || die "RAG_VERSION in .env is '$RAG_VERSION', expected '$new_version'"
+
 info "Starting $new_version"
 dc up -d --remove-orphans
+running="$(docker inspect --format '{{.Config.Image}}' "$(dc ps -q api)" 2>/dev/null || true)"
+if [ "$running" != "rag-onprem/api:$new_version" ]; then
+    warn "The api is running '${running:-nothing}', not rag-onprem/api:$new_version. To roll back:"
+    warn "  set RAG_VERSION=$old_version in .env, run: docker compose up -d && ./restore.sh $backup"
+    exit 1
+fi
 if ! wait_healthy 900; then
     warn "Not healthy. To roll back:"
-    warn "  set RAG_VERSION=$RAG_VERSION in .env, run: docker compose up -d && ./restore.sh $backup"
+    warn "  set RAG_VERSION=$old_version in .env, run: docker compose up -d && ./restore.sh $backup"
     exit 1
 fi
 ok "upgraded to $new_version (backup: $backup)"
