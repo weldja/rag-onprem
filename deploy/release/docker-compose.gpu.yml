@@ -3,8 +3,23 @@
 #   COMPOSE_PATH_SEPARATOR=:
 #   COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml
 # in .env. Remove the COMPOSE_FILE line to go back to CPU.
+#
+# Speed comes from fitting the WHOLE model on the card: layers left on the CPU
+# set the pace for all of it. Check with:  docker compose exec ollama ollama ps
+# The PROCESSOR column should say "100% GPU". Tuning adopted from rag-claude.
 services:
   ollama:
+    environment:
+      OLLAMA_FLASH_ATTENTION: "1"
+      # Card memory kept free as a safety margin, in MiB. Ollama's default of
+      # 1024 is a quarter of a 4 GB card. Raise it (768, 1024) in .env if the
+      # ollama service crashes or logs out-of-memory errors, e.g. when the same
+      # card also drives a screen.
+      LLAMA_ARG_FIT_TARGET: ${LLAMA_ARG_FIT_TARGET:-512}
+      # Working memory (not weights) of the model. f16 is full size; q8_0 is
+      # half size and can let a model fit a card where "ollama ps" shows a
+      # CPU/GPU split. Leave f16 unless that's the case.
+      OLLAMA_KV_CACHE_TYPE: ${OLLAMA_KV_CACHE_TYPE:-f16}
     deploy:
       resources:
         reservations:

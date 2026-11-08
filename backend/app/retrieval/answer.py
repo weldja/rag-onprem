@@ -14,6 +14,7 @@ Two modes:
 import html
 import logging
 import re
+import time
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
@@ -167,6 +168,41 @@ def finalise(text: str, hits: list[RetrievedChunk], mode: Mode = "answer") -> An
     return Answer(text, found=True, sources=sources, retrieved=retrieved)
 
 
+class _Timer:
+    """Per-answer timings for the log: counts and milliseconds only, never text
+    (questions and document contents must not be logged at INFO)."""
+
+    def __init__(self, mode: Mode) -> None:
+        self.mode = mode
+        self.start = time.monotonic()
+        self.retrieved_at: float | None = None
+        self.first_word_at: float | None = None
+
+    def retrieved(self) -> None:
+        self.retrieved_at = time.monotonic()
+
+    def word(self) -> None:
+        if self.first_word_at is None:
+            self.first_word_at = time.monotonic()
+
+    def _ms(self, t: float | None) -> str:
+        return "-" if t is None else f"{(t - self.start) * 1000:.0f}ms"
+
+    def log(self, hits: list[RetrievedChunk], found: bool | None) -> None:
+        context_chars = sum(len(h.text) for h in hits)
+        log.info(
+            "answer timing: mode=%s chunks=%d context_chars=%d retrieval=%s first_word=%s "
+            "total=%s found=%s",
+            self.mode,
+            len(hits),
+            context_chars,
+            self._ms(self.retrieved_at),
+            self._ms(self.first_word_at),
+            self._ms(time.monotonic()),
+            "error" if found is None else found,
+        )
+
+
 def gather(
     req: Request,
     *,
@@ -192,10 +228,19 @@ def answer_question(
     embedder: Embedder,
     spread: Callable[[], list[RetrievedChunk]] | None = None,
 ) -> Answer:
+    timer = _Timer(req.mode)
     hits = gather(req, retrieve=retrieve, spread=spread, embedder=embedder)
+    timer.retrieved()
     if not hits:
+        timer.log(hits, found=False)
         return NOT_FOUND
-    return finalise(llm.chat(build_messages(req, hits)), hits, req.mode)
+    try:
+        result = finalise(llm.chat(build_messages(req, hits)), hits, req.mode)
+    except OllamaError:
+        timer.log(hits, found=None)
+        raise
+    timer.log(hits, found=result.found)
+    return result
 
 
 def answer_events(
@@ -215,20 +260,29 @@ def answer_events(
     Clients should replace the streamed text with done.answer: a not-found reply
     is normalised there, and sources are only known once the answer is complete.
     """
+    timer = _Timer(req.mode)
+    hits: list[RetrievedChunk] = []
     try:
         yield {"type": "status", "stage": "retrieving"}
         hits = gather(req, retrieve=retrieve, spread=spread, embedder=embedder)
+        timer.retrieved()
         if not hits:
+            timer.log(hits, found=False)
             yield {"type": "done", **answer_dict(NOT_FOUND, debug)}
             return
         yield {"type": "status", "stage": "generating"}
         parts: list[str] = []
         for piece in llm.chat_stream(build_messages(req, hits)):
+            if piece.strip():
+                timer.word()
             parts.append(piece)
             yield {"type": "token", "text": piece}
-        yield {"type": "done", **answer_dict(finalise("".join(parts), hits, req.mode), debug)}
+        result = finalise("".join(parts), hits, req.mode)
+        timer.log(hits, found=result.found)
+        yield {"type": "done", **answer_dict(result, debug)}
     except OllamaError as exc:
         log.error("Model call failed: %s", exc)
+        timer.log(hits, found=None)
         yield {"type": "error", "message": "The local model is unavailable."}
 
 

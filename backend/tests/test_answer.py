@@ -1,3 +1,8 @@
+import logging
+import re
+
+import pytest
+
 from app.llm.prompts import NOT_FOUND_ANSWER, is_not_found_answer, prompt_version
 from app.retrieval.answer import (
     Request,
@@ -208,6 +213,34 @@ def test_events_not_found_has_no_tokens() -> None:
     )
     assert [e["type"] for e in events] == ["status", "done"]
     assert events[-1]["found"] is False
+
+
+def test_events_log_timings_without_any_text(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.INFO, logger="app.retrieval.answer")
+    list(
+        answer_events(
+            ask("secret question about salaries"),
+            retrieve=fixed_retriever([chunk(1, text="confidential payroll figures")]),
+            llm=FakeLLM("Private answer text [1]."),
+            embedder=FakeEmbedder(),
+        )
+    )
+    lines = [r.getMessage() for r in caplog.records if "answer timing" in r.getMessage()]
+    assert len(lines) == 1
+    line = lines[0]
+    assert "mode=answer chunks=1" in line and "found=True" in line
+    assert re.search(r"retrieval=\d+ms first_word=\d+ms total=\d+ms", line)
+    for text in ("secret", "salaries", "confidential", "payroll", "Private"):
+        assert text not in caplog.text
+
+
+def test_answer_question_logs_timing_for_not_found(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.INFO, logger="app.retrieval.answer")
+    answer_question(
+        ask("q"), retrieve=fixed_retriever([]), llm=FakeLLM("x"), embedder=FakeEmbedder()
+    )
+    for part in ("chunks=0", "first_word=-", "found=False"):
+        assert part in caplog.text
 
 
 def test_events_model_failure_yields_error() -> None:

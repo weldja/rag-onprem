@@ -191,7 +191,8 @@ If a release changes the embedding model, documents need re-indexing. They're sh
 | Browser certificate warning | You're using the self-signed certificate. Install a real one in `certs/` and run `docker compose restart proxy`. |
 | Document stuck in "pending" | `docker compose logs worker` |
 | A document shows "failed" | The error is shown next to it. Often the PDF is encrypted or damaged, or the scan is too poor to read. |
-| Answers are slow | Normal without a GPU. Check that `docker compose ps` shows no restarts and the server isn't swapping. |
+| Answers are slow | `docker compose logs api \| grep "answer timing"` shows each answer's search time, time to first word and total time (no question or document text is logged). Then `docker compose exec ollama ollama ps`: the PROCESSOR column should say "100% GPU". A CPU/GPU split means the model doesn't fit the card: try `OLLAMA_KV_CACHE_TYPE=q8_0` in `.env`, then `docker compose up -d`. Without a GPU, slow answers are normal; check that `docker compose ps` shows no restarts and the server isn't swapping. |
+| The model service crashes after enabling the GPU | Raise `LLAMA_ARG_FIT_TARGET` in `.env` to 768 or 1024, then `docker compose up -d`. |
 | "The company directory can't be reached" | `docker compose logs api` shows the LDAP error. Check `LDAP_URL`, the firewall, the service account password, and that `certs/ldap-ca.pem` signed the directory's certificate (expired certificates are refused). |
 | "The local model is unavailable" | `docker compose restart ollama`, then wait for it to become healthy. |
 

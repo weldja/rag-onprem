@@ -1,7 +1,12 @@
 # Dev GPU override (NVIDIA). scripts/_common.sh adds it when .env has DEV_GPU=1.
-# Customers get the same override from the release bundle automatically.
+# Customers get the same override (and settings) from deploy/release/docker-compose.gpu.yml;
+# see that file for what each setting does.
 services:
   ollama:
+    environment:
+      OLLAMA_FLASH_ATTENTION: "1"
+      LLAMA_ARG_FIT_TARGET: ${LLAMA_ARG_FIT_TARGET:-512}
+      OLLAMA_KV_CACHE_TYPE: ${OLLAMA_KV_CACHE_TYPE:-f16}
     deploy:
       resources:
         reservations:
