@@ -162,6 +162,11 @@ export default function Documents({
                 <a href={api.fileUrl(d.id)} target="_blank" rel="noreferrer">
                   {d.filename}
                 </a>
+                {d.source_path && d.source_path !== d.filename && (
+                  <div className="meta small" title="Indexed from a file share">
+                    {d.source_path}
+                  </div>
+                )}
               </td>
               <td>
                 <span className={`badge ${d.status}`}>{d.status}</span>
@@ -206,9 +211,11 @@ export default function Documents({
                 )}
                 {d.can_manage && editing?.id !== d.id && (
                   <>
-                    <button className="link" onClick={() => setEditing({ id: d.id, groups: d.group_ids })}>
-                      Share
-                    </button>
+                    {d.source_id === null && (
+                      <button className="link" onClick={() => setEditing({ id: d.id, groups: d.group_ids })}>
+                        Share
+                      </button>
+                    )}
                     <button
                       className="link"
                       disabled={BUSY.has(d.status)}
@@ -216,12 +223,14 @@ export default function Documents({
                     >
                       Re-index
                     </button>
-                    <button
-                      className="link danger"
-                      onClick={() => act(() => api.deleteDocument(d.id), `Delete ${d.filename}?`)}
-                    >
-                      Delete
-                    </button>
+                    {d.source_id === null && (
+                      <button
+                        className="link danger"
+                        onClick={() => act(() => api.deleteDocument(d.id), `Delete ${d.filename}?`)}
+                      >
+                        Delete
+                      </button>
+                    )}
                   </>
                 )}
               </td>

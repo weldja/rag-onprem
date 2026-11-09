@@ -13,6 +13,7 @@ from app.core.config import Settings, get_settings
 from app.db.engine import get_engine
 from app.llm.base import Embedder, LLMClient
 from app.llm.ollama import OllamaClient
+from app.retrieval.cache import AnswerCache
 from app.retrieval.rerank import FastEmbedReranker, Reranker
 from app.retrieval.service import DbSearch, Search
 
@@ -30,6 +31,13 @@ def get_ollama() -> OllamaClient:
         embed_num_gpu=s.embed_num_gpu,
         temperature=s.llm_temperature,
     )
+
+
+@lru_cache
+def get_answer_cache() -> AnswerCache:
+    s = get_settings()
+    salt = f"{s.llm_model}|{s.llm_num_ctx}|{s.llm_max_tokens}|{s.llm_temperature}"
+    return AnswerCache(s.answer_cache_entries, s.answer_cache_ttl_s, salt=salt)
 
 
 def get_llm() -> LLMClient:

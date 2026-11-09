@@ -5,11 +5,11 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Engine, delete, func, insert, select, text, update
+from sqlalchemy import Engine, delete, exists, func, insert, select, text, update
 from sqlalchemy.exc import IntegrityError
 
 from app.auth.acl import Viewer, can_manage, can_see
-from app.db.tables import chunks, document_groups, documents, ingest_jobs, user_groups
+from app.db.tables import chunks, document_groups, documents, ingest_jobs, sources, user_groups
 
 
 @dataclass(frozen=True)
@@ -28,6 +28,22 @@ class DocumentInfo:
     can_manage: bool
     created_at: datetime
     updated_at: datetime
+    source_id: int | None = None  # file share; None for uploads
+    source_path: str | None = None  # path within the share
+
+
+@dataclass(frozen=True)
+class SourceInfo:
+    id: int
+    key: str
+    name: str
+    display_path: str
+    active: bool
+    last_scan_at: datetime | None
+    last_scan_error: str | None
+    scan_requested: bool
+    files_seen: int
+    files_skipped: int
 
 
 @dataclass(frozen=True)
@@ -112,9 +128,13 @@ def register(
 
 
 def find_by_sha(engine: Engine, sha256: str) -> int | None:
+    """The uploaded document with this content. File-share copies don't count:
+    uploading a file that is also on a share creates a separate document."""
     with engine.connect() as conn:
         found: int | None = conn.execute(
-            select(documents.c.id).where(documents.c.sha256 == sha256)
+            select(documents.c.id).where(
+                documents.c.sha256 == sha256, documents.c.source_id.is_(None)
+            )
         ).scalar_one_or_none()
     return found
 
@@ -153,6 +173,8 @@ def _info_query(embed_model: str, viewer: Viewer) -> Any:
         can_manage(viewer).label("can_manage"),
         documents.c.created_at,
         documents.c.updated_at,
+        documents.c.source_id,
+        documents.c.source_path,
     ).where(can_see(viewer))
 
 
@@ -194,7 +216,12 @@ def visible_file(engine: Engine, doc_id: int, viewer: Viewer) -> tuple[str, str,
 
 def _require_manage(conn: Any, doc_id: int, viewer: Viewer) -> Any:
     row = conn.execute(
-        select(documents.c.storage_path, documents.c.status, can_manage(viewer).label("manage"))
+        select(
+            documents.c.storage_path,
+            documents.c.status,
+            documents.c.source_id,
+            can_manage(viewer).label("manage"),
+        )
         .where(documents.c.id == doc_id, can_see(viewer))
         .with_for_update(of=documents)
     ).one_or_none()
@@ -206,9 +233,16 @@ def _require_manage(conn: Any, doc_id: int, viewer: Viewer) -> Any:
 
 
 def delete_document(engine: Engine, doc_id: int, viewer: Viewer) -> str | None:
-    """Delete the row (chunks, jobs and sharing cascade). Returns the stored file path."""
+    """Delete an uploaded document (chunks, jobs and sharing cascade). Returns the
+    stored file path. File-share documents follow the share: the next scan
+    would only add them again."""
     with engine.begin() as conn:
         row = _require_manage(conn, doc_id, viewer)
+        if row.source_id is not None:
+            raise ConflictError(
+                "This document comes from a file share. Remove or exclude it on the "
+                "share; the index follows at the next scan."
+            )
         conn.execute(delete(documents).where(documents.c.id == doc_id))
     path: str | None = row.storage_path
     return path
@@ -233,7 +267,12 @@ def set_groups(engine: Engine, doc_id: int, group_ids: list[int], viewer: Viewer
     wanted = check_group_ids(engine, viewer, group_ids)
     try:
         with engine.begin() as conn:
-            _require_manage(conn, doc_id, viewer)
+            row = _require_manage(conn, doc_id, viewer)
+            if row.source_id is not None:
+                raise ConflictError(
+                    "File-share documents are visible to the share's groups "
+                    "(SHARE_n_GROUPS in .env), not set per document"
+                )
             conn.execute(delete(document_groups).where(document_groups.c.document_id == doc_id))
             if wanted:
                 conn.execute(
@@ -242,6 +281,63 @@ def set_groups(engine: Engine, doc_id: int, group_ids: list[int], viewer: Viewer
                 )
     except IntegrityError as exc:
         raise ConflictError("One of those groups doesn't exist") from exc
+
+
+# --------------------------------------------------------------- file shares
+
+
+def list_sources(engine: Engine, viewer: Viewer) -> list[SourceInfo]:
+    """File shares, for the sidebar. Non-admins see only shares holding a
+    document they may see, so a share's name doesn't leak to other groups."""
+    stmt = select(
+        sources.c.id,
+        sources.c.key,
+        sources.c.name,
+        sources.c.display_path,
+        sources.c.active,
+        sources.c.last_scan_at,
+        sources.c.last_scan_error,
+        sources.c.scan_requested_at.is_not(None).label("scan_requested"),
+        sources.c.files_seen,
+        sources.c.files_skipped,
+    ).order_by(sources.c.id)
+    if not viewer.is_admin:
+        stmt = stmt.where(
+            exists(
+                select(1)
+                .select_from(documents)
+                .where(documents.c.source_id == sources.c.id, can_see(viewer))
+            )
+        )
+    with engine.connect() as conn:
+        return [SourceInfo(**dict(r._mapping)) for r in conn.execute(stmt)]
+
+
+def request_scan(engine: Engine, source_id: int) -> None:
+    with engine.begin() as conn:
+        found = conn.execute(
+            update(sources)
+            .where(sources.c.id == source_id, sources.c.active)
+            .values(scan_requested_at=func.now())
+            .returning(sources.c.id)
+        ).one_or_none()
+    if found is None:
+        raise NotFoundError(source_id)
+
+
+def remove_source(engine: Engine, source_id: int) -> None:
+    """Forget a share that is no longer configured, with all its documents."""
+    with engine.begin() as conn:
+        row = conn.execute(
+            select(sources.c.active).where(sources.c.id == source_id).with_for_update()
+        ).one_or_none()
+        if row is None:
+            raise NotFoundError(source_id)
+        if row.active:
+            raise ConflictError(
+                "This share is still configured. Remove SHARE_n_PATH from .env and restart first."
+            )
+        conn.execute(delete(sources).where(sources.c.id == source_id))  # documents cascade
 
 
 # ----------------------------------------------------------------------- queue

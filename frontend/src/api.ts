@@ -71,6 +71,22 @@ export interface DocumentInfo {
   can_manage: boolean;
   created_at: string;
   updated_at: string;
+  source_id: number | null; // file share; null for uploads
+  source_path: string | null; // path within the share
+}
+
+/** A file share the documents are indexed from. */
+export interface DocSource {
+  id: number;
+  key: string;
+  name: string;
+  display_path: string;
+  active: boolean;
+  last_scan_at: string | null;
+  last_scan_error: string | null;
+  scan_requested: boolean;
+  files_seen: number;
+  files_skipped: number;
 }
 
 export interface Source {
@@ -124,6 +140,9 @@ export const api = {
     request<DocumentInfo>("PUT", `/api/documents/${id}/groups`, { group_ids }),
   reindex: (id: number) => request<DocumentInfo>("POST", `/api/documents/${id}/reindex`),
   deleteDocument: (id: number) => request<void>("DELETE", `/api/documents/${id}`),
+  sources: () => request<DocSource[]>("GET", "/api/sources"),
+  scanSource: (id: number) => request<void>("POST", `/api/sources/${id}/scan`),
+  removeSource: (id: number) => request<void>("DELETE", `/api/sources/${id}`),
   fileUrl: (id: number, page?: number | null) =>
     `/api/documents/${id}/file${page ? `#page=${page}` : ""}`,
 
@@ -148,7 +167,8 @@ export const api = {
 // ------------------------------------------------------------ streaming
 
 export type AskEvent =
-  | { type: "status"; stage: "retrieving" | "generating" }
+  | { type: "status"; stage: "retrieving" }
+  | { type: "status"; stage: "generating"; excerpts?: number; documents?: string[]; cached?: boolean }
   | { type: "token"; text: string }
   | ({ type: "done" } & Answer)
   | { type: "error"; message: string };

@@ -37,7 +37,7 @@ def db(engine: Engine) -> Engine:
     with engine.begin() as conn:
         conn.execute(
             text(
-                "TRUNCATE sessions, ingest_jobs, document_groups, chunks, documents, "
+                "TRUNCATE sessions, ingest_jobs, document_groups, chunks, documents, sources, "
                 "user_groups, users RESTART IDENTITY CASCADE"
             )
         )

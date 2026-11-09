@@ -59,6 +59,9 @@ old_version="$RAG_VERSION"
 load_env
 [ "$RAG_VERSION" = "$new_version" ] || die "RAG_VERSION in .env is '$RAG_VERSION', expected '$new_version'"
 
+# Added in the file-shares release; mounted in place of unset SHARE_n_PATH.
+mkdir -p empty-share
+
 info "Starting $new_version"
 dc up -d --remove-orphans
 running="$(docker inspect --format '{{.Config.Image}}' "$(dc ps -q api)" 2>/dev/null || true)"

@@ -132,6 +132,27 @@ model already loaded, `num_ctx` 8192:
   matched the 7B on every eval metric: 5.4 s median per question, 22 s per summary. Built with
   `RELEASE_LLM_MODEL=qwen3:4b-instruct-2507-q4_K_M`. The 7B stays the default for 8 GB+ GPUs.
   `qwen2.5:3b` was not considered: its licence doesn't allow commercial use.
+- **`OLLAMA_KV_CACHE_TYPE=q8_0` on the 4 GB card (2026-11-09).** With f16 the Qwen3 4B's
+  context memory (576 MiB at `num_ctx` 4096) left 4 of its 37 layers on the CPU (`ollama ps`:
+  10%/90% CPU/GPU). q8_0 halves it to 306 MiB and the whole model fits ("100% GPU"). Synthetic
+  RAG prompt (~1,250 tokens, 6 excerpts), model loaded, 3 runs each:
+
+  | KV cache | Placement | Prompt tok/s | Output tok/s | 150–190-token answer, total |
+  |---|---|---|---|---|
+  | f16 | 10% CPU | 132–136 | 5.4–13.1 | 23–36 s |
+  | q8_0 | 100% GPU | 133–143 | 15–24 | 17–19 s |
+
+  Writing is about twice as fast; reading the prompt is unchanged (~9 s for 1,250 tokens on this
+  card). That makes the prompt the floor for the first word: roughly 0.7 s per 100 tokens of
+  excerpts. A larger `num_batch` (1024) didn't speed up prompt reading and pushed layers back
+  onto the CPU. `install.sh` now sets q8_0 with the other small-GPU settings. Answer quality
+  with q8_0 has not been re-run through the eval yet; do that before the next small-GPU bundle.
+- **Indexing evicted the LLM.** The worker didn't read `.env`, so its embedding calls went
+  without `EMBED_NUM_GPU=0`, Ollama reloaded `bge-m3` onto the GPU and pushed the LLM out; the
+  next question paid the reload. The worker now has `env_file` like the api.
+- **Answer cache.** A repeated question that retrieves the same excerpts is answered from
+  memory (key: model settings plus the exact messages, so ACLs and document changes are
+  respected without invalidation). The eval sends `debug: true`, which bypasses the cache.
 - Not yet measured: the 7B entirely on an 8 GB+ GPU. Measure it on the first customer-class GPU
   and record it here, for both a question and a summary.
 

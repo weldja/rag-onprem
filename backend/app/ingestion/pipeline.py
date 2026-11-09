@@ -9,7 +9,7 @@ import logging
 from itertools import batched
 from pathlib import Path
 
-from sqlalchemy import Engine, delete, func, insert, select, update
+from sqlalchemy import Engine, delete, func, insert, select, text, update
 
 from app.core.config import Settings
 from app.db.tables import chunks, documents
@@ -56,20 +56,72 @@ def set_status(engine: Engine, doc_id: int, status: str, error: str | None = Non
         )
 
 
+def copy_from_duplicate(engine: Engine, doc_id: int, sha256: str, embed_model: str) -> int | None:
+    """If another ready document has the same content, fully embedded with the
+    current model, copy its chunks instead of parsing and embedding again (file
+    shares often hold the same file in several folders). Returns the number of
+    chunks copied, or None when there is no such document."""
+    with engine.begin() as conn:
+        donor = conn.execute(
+            text(
+                """
+                SELECT d.id, d.page_count FROM documents d
+                 WHERE d.sha256 = :sha AND d.id <> :doc AND d.status = 'ready'
+                   AND EXISTS (SELECT 1 FROM chunks c WHERE c.document_id = d.id)
+                   AND NOT EXISTS (SELECT 1 FROM chunks c
+                                    WHERE c.document_id = d.id AND c.embed_model <> :model)
+                 ORDER BY d.id LIMIT 1
+                """
+            ),
+            {"sha": sha256, "doc": doc_id, "model": embed_model},
+        ).one_or_none()
+        if donor is None:
+            return None
+        conn.execute(delete(chunks).where(chunks.c.document_id == doc_id))
+        copied = conn.execute(
+            text(
+                """
+                INSERT INTO chunks
+                       (document_id, page, section, ordinal, text, embedding, embed_model)
+                SELECT :doc, page, section, ordinal, text, embedding, embed_model
+                  FROM chunks WHERE document_id = :donor
+                """
+            ),
+            {"doc": doc_id, "donor": donor.id},
+        ).rowcount
+        conn.execute(
+            update(documents)
+            .where(documents.c.id == doc_id)
+            .values(status="ready", error=None, page_count=donor.page_count, updated_at=func.now())
+        )
+    return int(copied)
+
+
 def process_document(engine: Engine, doc_id: int, *, embedder: Embedder, settings: Settings) -> int:
     """Index (or re-index) a document. Returns the number of chunks written.
     Raises IngestError for permanent problems; model errors propagate so the
     caller can retry."""
     with engine.connect() as conn:
         row = conn.execute(
-            select(documents.c.filename, documents.c.storage_path, documents.c.content_type).where(
-                documents.c.id == doc_id
-            )
+            select(
+                documents.c.filename,
+                documents.c.storage_path,
+                documents.c.content_type,
+                documents.c.sha256,
+                documents.c.source_id,
+            ).where(documents.c.id == doc_id)
         ).one_or_none()
     if row is None:
         raise IngestError(f"Document {doc_id} no longer exists")
     if not row.storage_path or not Path(row.storage_path).is_file():
+        if row.source_id is not None:
+            raise IngestError(f"{row.filename} is no longer on the share (or can't be read)")
         raise IngestError(f"Original file for {row.filename} is missing; upload it again")
+
+    copied = copy_from_duplicate(engine, doc_id, row.sha256, embedder.embed_model)
+    if copied is not None:
+        log.info("Document %d: copied %d chunks from an identical document", doc_id, copied)
+        return copied
 
     set_status(engine, doc_id, "processing")
     try:
@@ -124,5 +176,5 @@ def process_document(engine: Engine, doc_id: int, *, embedder: Embedder, setting
             .where(documents.c.id == doc_id)
             .values(status="ready", error=None, page_count=loaded.page_count, updated_at=func.now())
         )
-    log.info("Indexed document %d (%s): %d chunks", doc_id, row.filename, len(pieces))
+    log.info("Indexed document %d: %d chunks", doc_id, len(pieces))
     return len(pieces)

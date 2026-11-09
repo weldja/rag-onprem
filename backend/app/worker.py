@@ -14,12 +14,13 @@ from sqlalchemy import Engine
 
 from app.core.config import Settings, get_settings
 from app.db.engine import get_engine
-from app.ingestion import registry
+from app.ingestion import registry, shares
 from app.ingestion.pipeline import IngestError, process_document, set_status
 from app.llm.base import Embedder
 from app.llm.ollama import OllamaClient, OllamaError
 
 log = logging.getLogger("app.worker")
+_SHARE_CHECK_S = 5.0
 
 
 def run_once(engine: Engine, embedder: Embedder, settings: Settings) -> bool:
@@ -76,8 +77,22 @@ def main() -> None:
     requeued = registry.requeue_stale_jobs(engine, settings.job_stale_after_s)
     if requeued:
         log.info("Re-queued %d stale job(s)", requeued)
-    log.info("Worker started (embed model %s)", settings.embed_model)
+    shares.sync_sources(engine, settings.shares())
+    log.info(
+        "Worker started (embed model %s, %d file share(s))",
+        settings.embed_model,
+        len(settings.shares()),
+    )
+    last_share_check = 0.0
     while not stopping:
+        # Cheap check (one query) at most every few seconds, also between jobs,
+        # so "Scan now" responds quickly even while a large share is indexing.
+        if settings.shares() and time.monotonic() - last_share_check >= _SHARE_CHECK_S:
+            last_share_check = time.monotonic()
+            try:
+                shares.scan_due(engine, settings)
+            except Exception:
+                log.exception("File share scan failed")
         try:
             busy = run_once(engine, client, settings)
         except Exception:

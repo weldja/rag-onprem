@@ -26,10 +26,14 @@ Run all commands from the bundle folder, as a user allowed to run Docker.
   summaries about 22 seconds, with the same answer quality in our evaluation. The standard bundle
   also works on such a card (questions about 10 seconds, summaries about 35 seconds). Either way
   the installer applies small-GPU settings (`LLM_NUM_CTX=4096`, `LLM_MAX_TOKENS=768`,
-  `EMBED_NUM_GPU=0`). The `VERSION` file shows which model a bundle contains (`llm_model`).
+  `EMBED_NUM_GPU=0`, `OLLAMA_KV_CACHE_TYPE=q8_0`). The `VERSION` file shows which model a bundle
+  contains (`llm_model`).
 - **No GPU:** questions take 20–60 seconds or more, and summaries several minutes.
 
 Answers stream as they're written, so the first words appear before the answer is complete.
+While a question is being answered, the page shows what's happening ("Searching your documents",
+then "Reading 6 excerpts from 3 documents" with their names) and the seconds elapsed. A question
+asked again that finds the same excerpts is answered at once from memory.
 
 `bash preflight.sh` checks all of this and changes nothing.
 
@@ -60,7 +64,9 @@ Configuration lives in `.env`, which is readable only by its owner. After changi
 | `HTTP_BIND`, `HTTP_PORT`, `HTTPS_PORT` | where the web interface listens |
 | `MIN_SIMILARITY`, `TOP_K`, `CHUNK_SIZE`, `CHUNK_OVERLAP` | retrieval tuning (defaults were chosen by evaluation) |
 | `LLM_MAX_TOKENS`, `SUMMARY_CHUNKS` | longest answer in tokens (default 1024) and excerpts a document summary reads (default 6). Higher values give fuller answers and summaries but take longer. |
-| `EMBED_NUM_GPU`, `LLM_NUM_CTX` | `0` keeps the search model on the CPU so it never displaces the answer model on a small GPU; context window of the answer model. Set automatically on a GPU under 6 GB. |
+| `EMBED_NUM_GPU`, `LLM_NUM_CTX`, `OLLAMA_KV_CACHE_TYPE` | `0` keeps the search model on the CPU so it never displaces the answer model on a small GPU; context window of the answer model; `q8_0` halves the model's working memory so it fits a small card. Set automatically on a GPU under 6 GB. |
+| `SHARE_1_PATH` ... `SHARE_3_PATH` and related | file shares indexed in place; see **File shares** below. |
+| `ANSWER_CACHE_ENTRIES` | answers kept in memory for repeated questions (default 500; `0` turns it off). |
 | `PASSWORD_MIN_LENGTH` | minimum length of local passwords (default 12, lowest 1). Any characters are allowed, including spaces. Lowering it makes passwords easier to guess. |
 | `LLM_MODEL`, `EMBED_MODEL`, `RAG_VERSION` | set by the bundle. Don't change them; the models are built into the images. |
 
@@ -83,6 +89,44 @@ Configuration lives in `.env`, which is readable only by its owner. After changi
   - Accounts lock for 5 minutes after 5 wrong passwords.
 - **Lost admin password:** `docker compose exec api python -m app.admin reset-password alice --password-stdin`
   (type the new password, then press Enter).
+
+### File shares
+
+Instead of (or as well as) uploading, documents can be indexed straight from up to three folders,
+such as a company file share. The left side of the **Ask** page lists each share with the path
+it's indexed from, how many documents are ready or still indexing, when it was last checked, and
+its folders. Click a folder, a share or a document to ask about just that (the question box
+shows "Answering from ..."); click the ✕ to ask about everything again.
+
+1. Mount the share on the server, read-only. For a Windows share, for example in `/etc/fstab`:
+   `//fileserver/policies /mnt/policies cifs ro,credentials=/root/.smb-rag,iocharset=utf8 0 0`
+   (the account only needs read access).
+2. In `.env`:
+   ```
+   SHARE_1_PATH=/mnt/policies
+   SHARE_1_NAME='Policies'
+   SHARE_1_DISPLAY_PATH='\\fileserver\policies'
+   SHARE_1_GROUPS='All staff'
+   ```
+   Keep the single quotes around values with spaces or backslashes.
+3. `docker compose up -d`. The share is scanned within a few seconds, then every 5 minutes
+   (`SHARE_SCAN_INTERVAL_S`). Administrators can click **Scan now** next to a share.
+
+How it behaves:
+- New and changed files are indexed and deleted files drop out of the index. A file is only read
+  again when its size or date changes. Identical copies in several folders are indexed once.
+- Files are never modified, copied or moved; the share is mounted read-only.
+- Office lock files (`~$...`), temporary and hidden files, and recycle bins are ignored, as are
+  unsupported types and files over `MAX_UPLOAD_MB`. The sidebar shows how many were skipped.
+- **Who sees what:** every document on a share is visible to the groups in `SHARE_1_GROUPS` (and
+  administrators). The share's own Windows permissions are **not** read. Keep folders that need
+  different permissions out with `SHARE_1_EXCLUDE='HR/*,Board/*'`, and mount them as another share
+  with its own groups.
+- If the share is unmounted or unreachable it looks empty; nothing is removed from the index then,
+  and the sidebar shows a warning.
+- Share documents can't be deleted or re-shared in the app; change the share instead. Removing a
+  share from `.env` keeps its documents until an administrator clicks **Remove** in the sidebar.
+- Backups contain the index, not the share's files; back the share up as you do today.
 
 ### Directory sign-in (Active Directory / LDAP)
 
@@ -196,6 +240,7 @@ If a release changes the embedding model, documents need re-indexing. They're sh
 | Not healthy after 15 minutes | `docker compose logs ollama api`. Most often there isn't enough RAM for the model. |
 | Browser certificate warning | You're using the self-signed certificate. Install a real one in `certs/` and run `docker compose restart proxy`. |
 | Document stuck in "pending" | `docker compose logs worker` |
+| A share shows a warning or no documents | `docker compose exec worker ls /shares/1` should list the files. If it's empty, the share isn't mounted on the host, or `SHARE_1_PATH` is wrong. `docker compose logs worker \| grep Share` shows each scan. |
 | A document shows "failed" | The error is shown next to it. Often the PDF is encrypted or damaged, or the scan is too poor to read. |
 | Answers are slow | `docker compose logs api \| grep "answer timing"` shows each answer's search time, time to first word and total time (no question or document text is logged). Then `docker compose exec ollama ollama ps`: the PROCESSOR column should say "100% GPU". A CPU/GPU split means the model doesn't fit the card: try `OLLAMA_KV_CACHE_TYPE=q8_0` in `.env`, then `docker compose up -d`. Without a GPU, slow answers are normal; check that `docker compose ps` shows no restarts and the server isn't swapping. |
 | The model service crashes after enabling the GPU | Raise `LLAMA_ARG_FIT_TARGET` in `.env` to 768 or 1024, then `docker compose up -d`. |

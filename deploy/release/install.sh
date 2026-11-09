@@ -40,7 +40,10 @@ else
         set_env LLM_NUM_CTX 4096
         set_env LLM_MAX_TOKENS 768
         set_env EMBED_NUM_GPU 0
-        ok "small GPU ($((vram_mb / 1024)) GB): LLM_NUM_CTX=4096, LLM_MAX_TOKENS=768, EMBED_NUM_GPU=0"
+        # Half-size model working memory: on a 4 GB card it is what lets the
+        # whole model onto the GPU, doubling answer speed (docs/eval-results.md).
+        set_env OLLAMA_KV_CACHE_TYPE q8_0
+        ok "small GPU ($((vram_mb / 1024)) GB): LLM_NUM_CTX=4096, LLM_MAX_TOKENS=768, EMBED_NUM_GPU=0, OLLAMA_KV_CACHE_TYPE=q8_0"
     fi
 fi
 if [ "$gpu" = 1 ]; then
@@ -63,6 +66,9 @@ elif command -v openssl >/dev/null 2>&1; then
 else
     die "No certs/tls.crt + certs/tls.key and no openssl to create one. Add the certificate and re-run."
 fi
+
+# Mounted in place of file shares that aren't configured (SHARE_n_PATH).
+mkdir -p empty-share
 
 info "Starting (the first start loads the model into memory)"
 dc up -d

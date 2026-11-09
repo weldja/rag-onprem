@@ -76,6 +76,12 @@ services:
     volumes:
       - uploads:/data/uploads
       - ./certs:/etc/rag/certs:ro  # e.g. the directory's CA: LDAP_CA_FILE=/etc/rag/certs/ldap-ca.pem
+      # File shares, read-only (SHARE_n_PATH in .env; see README "File shares").
+      # Unset ones mount the empty ./empty-share folder: an empty variable would
+      # otherwise expand to ":/shares/n" and abort compose.
+      - ${SHARE_1_PATH:-./empty-share}:/shares/1:ro
+      - ${SHARE_2_PATH:-./empty-share}:/shares/2:ro
+      - ${SHARE_3_PATH:-./empty-share}:/shares/3:ro
     depends_on:
       db:
         condition: service_healthy
@@ -97,9 +103,20 @@ services:
     image: rag-onprem/api:dev
     entrypoint: []
     command: ["python", "-m", "app.worker"]
+    # .env supplies EMBED_NUM_GPU (without it, indexing loads the embedding
+    # model onto a small GPU and evicts the LLM) and the SHARE_* settings.
+    env_file:
+      - path: ../.env
+        required: false
     environment: *backend-env
     volumes:
       - uploads:/data/uploads
+      # File shares, read-only (SHARE_n_PATH in .env; see README "File shares").
+      # Unset ones mount the empty ./empty-share folder: an empty variable would
+      # otherwise expand to ":/shares/n" and abort compose.
+      - ${SHARE_1_PATH:-./empty-share}:/shares/1:ro
+      - ${SHARE_2_PATH:-./empty-share}:/shares/2:ro
+      - ${SHARE_3_PATH:-./empty-share}:/shares/3:ro
     depends_on:
       api:
         condition: service_healthy

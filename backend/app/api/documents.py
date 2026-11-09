@@ -46,6 +46,8 @@ class DocumentOut(BaseModel):
     can_manage: bool
     created_at: datetime
     updated_at: datetime
+    source_id: int | None = None
+    source_path: str | None = None
 
 
 class UploadOut(BaseModel):
@@ -190,14 +192,20 @@ def share(
 
 
 @router.delete("/{doc_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_document(doc_id: int, viewer: CurrentUser, engine: Db) -> Response:
+def delete_document(
+    doc_id: int, viewer: CurrentUser, engine: Db, settings: AppSettings
+) -> Response:
     try:
         path = registry.delete_document(engine, doc_id, viewer)
     except registry.NotFoundError as exc:
         raise _not_found(exc) from exc
     except registry.ForbiddenError as exc:
         raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc)) from exc
-    storage.discard(path)
+    except registry.ConflictError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    # Only ever delete our own copy in the uploads volume, never a file elsewhere.
+    if path and Path(path).resolve().is_relative_to(Path(settings.upload_dir).resolve()):
+        storage.discard(path)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

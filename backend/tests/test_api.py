@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from app.api import deps
 from app.auth.acl import Viewer
 from app.main import CSRF_HEADER, CSRF_VALUE, app
+from app.retrieval.cache import AnswerCache
 from app.retrieval.search import RetrievedChunk
 from tests.fakes import FakeEmbedder, FakeLLM, FakeSearch, chunk
 
@@ -22,6 +23,9 @@ def anon() -> Iterator[TestClient]:
 @pytest.fixture
 def client(anon: TestClient) -> TestClient:
     app.dependency_overrides[deps.get_current_user] = lambda: ALICE
+    # A fresh cache per test, so one test's answer is never another's hit.
+    cache = AnswerCache(100, 60)
+    app.dependency_overrides[deps.get_answer_cache] = lambda: cache
     return anon
 
 

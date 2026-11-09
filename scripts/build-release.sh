@@ -51,7 +51,8 @@ docker pull "$PGVECTOR_IMAGE"
 docker tag "$PGVECTOR_IMAGE" "rag-onprem/pgvector:$VERSION"
 
 echo "==> Assembling $out"
-mkdir -p "$out/nginx" "$out/certs"
+# empty-share: what unset SHARE_n_PATH entries mount (see docker-compose.yml).
+mkdir -p "$out/nginx" "$out/certs" "$out/empty-share"
 cp deploy/release/*.sh deploy/release/docker-compose*.yml "$out/"
 cp -r deploy/nginx/templates "$out/nginx/templates"
 cp deploy/certs/README.md "$out/certs/README.md"

@@ -10,8 +10,8 @@ their sources.
 
 It is installed **inside the customer's own server environment** and must work fully air-gapped.
 
-**Status:** milestone 1 of `docs/build-plan.md` (see *Current state* below). The stack below is the
-chosen default. Flag it if a decision looks wrong rather than quietly working around it.
+**Status:** milestones 1–5 of `docs/build-plan.md` plus file shares are implemented (see *Current state*
+below). The stack below is the chosen one. Flag it if a decision looks wrong rather than quietly working around it.
 
 ## Non-negotiable constraints
 
@@ -32,14 +32,14 @@ These override convenience, defaults, and library examples. If a task seems to n
 Downloading things is allowed **at build time** (dependency install, image builds, fetching model weights
 into an offline bundle). It is **never** allowed at container start or at request time.
 
-## Proposed default stack
+## Stack
 
-| Concern | Default | Why / notes |
+| Concern | Choice | Why / notes |
 |---|---|---|
 | LLM runtime | **Ollama** (own container) | Simple to run, GPU or CPU, handles GGUF quantisation, local HTTP API. vLLM is the upgrade path for customers with larger GPUs. |
-| LLM model | 7–9B instruct model, Q4_K_M GGUF (e.g. Qwen or Llama family) | Runs on a single 8–12 GB GPU or a strong CPU. Model name is config, not code. **Check the licence permits commercial redistribution before you ship it.** |
-| Embeddings | **bge-m3** (or `nomic-embed-text`) served by Ollama | Multilingual, good retrieval quality. One model runtime for both LLM and embeddings. Embedding dimension is config. |
-| Reranker (optional) | fastembed ONNX cross-encoder (e.g. `Xenova/ms-marco-MiniLM-L-6-v2`) inside the API container | Weights built into the image. Off by default (see `docs/eval-results.md`). Chosen over sentence-transformers to avoid pulling PyTorch (about 1 GB) into the image. |
+| LLM model | **`qwen2.5:7b-instruct`** (standard bundle), **`qwen3:4b-instruct-2507-q4_K_M`** (small-GPU bundle) | See *Models* below. Model name is config, not code. |
+| Embeddings | **`bge-m3`** (1024-dim) served by Ollama | Multilingual, good retrieval quality. One model runtime for both LLM and embeddings. See *Models* before changing it. |
+| Reranker (optional) | fastembed ONNX cross-encoder `Xenova/ms-marco-MiniLM-L-6-v2` inside the API container | Weights built into the image. Off by default (see `docs/eval-results.md`). Chosen over sentence-transformers to avoid pulling PyTorch (about 1 GB) into the image. |
 | Vector store + DB | **PostgreSQL 16 + pgvector** | One stateful service holds documents, chunks, vectors, users, ACLs and job queue. Gives hybrid search (pgvector + `tsvector` full-text) and a single backup target. Qdrant is the alternative if vector scale outgrows Postgres. |
 | Backend | **Python 3.12, FastAPI**, Pydantic v2, SQLAlchemy 2 + psycopg 3, Alembic | |
 | Dependency mgmt | **uv** (`pyproject.toml` + `uv.lock`) | Reproducible locked installs. `uv run` avoids venv-activation differences on Windows. |
@@ -51,7 +51,7 @@ into an offline bundle). It is **never** allowed at container start or at reques
 | Tests | pytest, pytest-asyncio, **pytest-socket** (`--disable-socket`, allow only localhost/compose hosts) | The test suite itself enforces "no egress". |
 | Lint/format/types | ruff, mypy (strict on `app/`); eslint + prettier for frontend | |
 
-## Planned architecture
+## Architecture
 
 ```
 browser ──HTTPS──> nginx ──> api (FastAPI) ──> postgres+pgvector
@@ -117,16 +117,43 @@ Apply these whenever you add the matching component:
 - Defaults must work for a CPU-only server. GPU is an opt-in compose profile (`--profile gpu`).
 - **Response-time target: answers within 10 seconds.** That needs the whole 7B model on an NVIDIA
   GPU with 8 GB+ (decided 2026-11-08; measurements in `docs/eval-results.md`, "Latency"). CPU and
-  smaller GPUs still work, slowly; preflight warns about them. Don't trade answer quality for speed
-  (e.g. a smaller model) without running the eval: `phi4-mini` was tried and dropped citations.
+  smaller GPUs still work, slowly; preflight warns about them.
+  - Open question: whether "10 seconds" means first words or the complete answer.
+  - Not yet measured: the 7B entirely on an 8 GB+ GPU. Measure it on the first customer-class GPU.
 - **On a GPU that can't hold both models, keep the embedding model on the CPU (`EMBED_NUM_GPU=0`)**,
-  or Ollama swaps the LLM out on every question. That alone took the 7B on a 4 GB card from ~30 s
-  to a 9.9 s median. `install.sh` sets it, with `LLM_NUM_CTX=4096` and `LLM_MAX_TOKENS=768`, on
-  cards under 6 GB. Check placement with `ollama ps` and timings with the api's "answer timing"
-  log line.
-- **Two bundles:** the standard one (7B, for 8 GB+ GPUs) and a small-GPU one with
-  `qwen3:4b-instruct-2507` (Apache 2.0), which fits a 4 GB card and matched the 7B on the eval at
-  ~5 s per question. Any model change needs the full eval, including the summary cases.
+  or Ollama swaps the LLM out on every question. `install.sh` sets it on cards under 6 GB, along
+  with `LLM_NUM_CTX=4096`, `LLM_MAX_TOKENS=768` and `OLLAMA_KV_CACHE_TYPE=q8_0`. Check placement
+  with `ollama ps` and timings with the api's "answer timing" log line.
+
+## Models
+
+| Role | Model (exact Ollama tag) | Licence | Status |
+|---|---|---|---|
+| LLM, standard bundle (8 GB+ GPU) | `qwen2.5:7b-instruct` | Apache 2.0 | Customer default (`.env.example`) |
+| LLM, small-GPU bundle (< 8 GB) | `qwen3:4b-instruct-2507-q4_K_M` | Apache 2.0 | Shipped; matched the 7B on every eval metric, ~5 s per question |
+| Embeddings | `bge-m3` | MIT | Fixed (1024-dim, schema is `vector(1024)`) |
+| Reranker (off by default) | `Xenova/ms-marco-MiniLM-L-6-v2` | Apache 2.0 | Optional, `RERANKER_MODEL` |
+| CI only | `qwen2.5:0.5b-instruct` | Apache 2.0 | Egress check and e2e smoke test. Never use it to judge quality |
+
+Rejected (don't propose these again without new evidence):
+- `qwen2.5:3b-instruct`: its licence doesn't allow commercial use. The prompt was originally tuned on it.
+- `phi4-mini`: faster, but left answers uncited and answered a question the documents don't cover
+  (citation recall 0.917, abstention 0.75).
+
+Rules:
+- **Licence first.** Prefer Apache 2.0 or MIT; anything else needs the user's sign-off before it ships.
+  Licences change *within* a family: Qwen2.5 7B is Apache 2.0, but Qwen2.5 3B and 72B are not.
+  Llama-family models carry attribution, acceptable-use and user-count terms.
+- **Qwen3: use the `-instruct-2507` tags only.** Plain `qwen3:<size>` tags are hybrid "thinking"
+  models that emit `<think>` blocks, which ruins latency and answer formatting.
+- **Speed vs quality.** A smaller or faster model is acceptable only if it matches the current model
+  on the full eval (`bash scripts/eval.sh`), including the summary cases. Qwen3 4B passed; phi4-mini didn't.
+- **Any model change, and any prompt change, runs the eval against both shipped LLMs** (7B and Qwen3 4B).
+- **Changing the embedding model is a migration, not a config edit:** `EMBED_DIM` is baked into the
+  `vector(1024)` column, and every document must be re-indexed. Vectors from different models must never mix.
+- Models are pulled into the ollama image at build time by tag (`deploy/ollama/Dockerfile`). Tags can be
+  re-pointed upstream, and model weights are **not yet pinned by digest** (unlike base images). The
+  build log's `ollama list` shows the IDs. Record them when cutting a release.
 
 ## Development environment (Windows 11 + Git Bash)
 
@@ -209,8 +236,8 @@ Tests: `scripts/test.sh` (unit, offline), `scripts/test-db.sh` (real Postgres, `
 
 Milestone 4 (answer quality):
 - **Prompt changes must go through the eval:** `bash scripts/eval.sh --detach --label X`, then compare
-  with `docs/eval-results.md`. The 3B dev model is very sensitive to prompt wording. Never put example
-  sentences in prompts, because the model copies them into answers. Add a case to `backend/evals/cases.json`
+  with `docs/eval-results.md`. Run it against both shipped LLMs (see *Models*). Small models are very
+  sensitive to prompt wording. Never put example sentences in prompts, because the model copies them into answers. Add a case to `backend/evals/cases.json`
   for every failure found by hand.
 - Conversation history: the client sends it and the server keeps none. The last `HISTORY_TURNS`
   exchanges go to the LLM with old `[n]` markers stripped, and short follow-ups also retrieve with the
@@ -259,6 +286,26 @@ Milestone 5 (shipping):
   `-am`); `COMPOSE_FILE` needs `COMPOSE_PATH_SEPARATOR=:` to work on Windows.
 - CI (`.github/workflows/ci.yml`): unit tests with networking off, shellcheck, frontend build and URL
   check, then a full stack with a 0.5B model for the egress check, DB tests and an e2e smoke test.
+
+File shares, sidebar and responsiveness:
+- Up to three read-only shares: `SHARE_n_PATH` (host) is bind-mounted at `/shares/n` in api and
+  worker (unset → `empty-share/`). Settings: `Settings.shares()`; migration 0005 adds `sources`
+  and `documents.source_id/source_path/source_mtime`. `sha256` is unique among uploads only.
+- `app/ingestion/shares.py`: the worker scans (advisory lock, `SHARE_SCAN_INTERVAL_S`, or
+  "Scan now" via `sources.scan_requested_at`). It stats files and hashes only on size/mtime
+  change. It never deletes when the share looks empty/unmounted or any part couldn't be read.
+  Lock/temp/hidden files are skipped. Share docs get exactly `SHARE_n_GROUPS` (re-applied every
+  scan) and can't be deleted or re-shared via the API. Unconfigured shares go inactive and are
+  kept until an admin removes them. Identical content copies chunks (`copy_from_duplicate`).
+- `GET /api/sources` lists shares; non-admins only see shares holding a document they can see.
+- UI: the Ask tab is sidebar (`frontend/src/Sidebar.tsx`: shares with display path, counts,
+  folder tree, scope to share/folder/file, summary) + chat. Scope is sent as `document_ids`
+  (max 2000). Chat shows a thinking indicator driven by the `generating` status event
+  (`excerpts`, `documents`, `cached`), an elapsed timer, and "Answered in N s".
+- Answer cache (`app/retrieval/cache.py`, in api memory): keyed on model settings plus the exact
+  messages, so it's ACL-safe and never stale; `debug` requests (the eval) bypass it.
+- The worker reads `.env` (`env_file`) so indexing honours `EMBED_NUM_GPU=0`. Without it, indexing
+  evicts the LLM from small GPUs.
 
 ## Working conventions
 

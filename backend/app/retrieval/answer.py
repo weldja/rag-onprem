@@ -22,6 +22,7 @@ from typing import Any, Literal
 from app.llm.base import ChatMessage, Embedder, LLMClient
 from app.llm.ollama import OllamaError
 from app.llm.prompts import NOT_FOUND_ANSWER, is_not_found_answer, load_prompt
+from app.retrieval.cache import AnswerCache
 from app.retrieval.search import RetrievedChunk
 
 log = logging.getLogger(__name__)
@@ -177,6 +178,7 @@ class _Timer:
         self.start = time.monotonic()
         self.retrieved_at: float | None = None
         self.first_word_at: float | None = None
+        self.cached = False
 
     def retrieved(self) -> None:
         self.retrieved_at = time.monotonic()
@@ -192,7 +194,7 @@ class _Timer:
         context_chars = sum(len(h.text) for h in hits)
         log.info(
             "answer timing: mode=%s chunks=%d context_chars=%d retrieval=%s first_word=%s "
-            "total=%s found=%s",
+            "total=%s found=%s cached=%s",
             self.mode,
             len(hits),
             context_chars,
@@ -200,6 +202,7 @@ class _Timer:
             self._ms(self.first_word_at),
             self._ms(time.monotonic()),
             "error" if found is None else found,
+            self.cached,
         )
 
 
@@ -220,6 +223,22 @@ def gather(
     return hits
 
 
+def reading_status(hits: list[RetrievedChunk], *, cached: bool = False) -> dict[str, Any]:
+    """The "generating" status event: what the model is about to read, so the
+    user sees progress (and where the answer will come from) during the wait
+    before the first word."""
+    names = list(dict.fromkeys(h.filename for h in hits))
+    event: dict[str, Any] = {
+        "type": "status",
+        "stage": "generating",
+        "excerpts": len(hits),
+        "documents": names,
+    }
+    if cached:
+        event["cached"] = True
+    return event
+
+
 def answer_question(
     req: Request,
     *,
@@ -227,6 +246,7 @@ def answer_question(
     llm: LLMClient,
     embedder: Embedder,
     spread: Callable[[], list[RetrievedChunk]] | None = None,
+    cache: AnswerCache | None = None,
 ) -> Answer:
     timer = _Timer(req.mode)
     hits = gather(req, retrieve=retrieve, spread=spread, embedder=embedder)
@@ -234,11 +254,21 @@ def answer_question(
     if not hits:
         timer.log(hits, found=False)
         return NOT_FOUND
+    messages = build_messages(req, hits)
+    key = cache.key(messages) if cache is not None else ""
+    cached = cache.get(key) if cache is not None else None
+    if cached is not None:
+        timer.cached = True
+        result = finalise(cached, hits, req.mode)
+        timer.log(hits, found=result.found)
+        return result
     try:
-        result = finalise(llm.chat(build_messages(req, hits)), hits, req.mode)
+        result = finalise(llm.chat(messages), hits, req.mode)
     except OllamaError:
         timer.log(hits, found=None)
         raise
+    if cache is not None and result.found:
+        cache.put(key, result.answer)
     timer.log(hits, found=result.found)
     return result
 
@@ -251,9 +281,11 @@ def answer_events(
     embedder: Embedder,
     spread: Callable[[], list[RetrievedChunk]] | None = None,
     debug: bool = False,
+    cache: AnswerCache | None = None,
 ) -> Iterator[dict[str, Any]]:
     """Streaming protocol (event dicts, each with a "type"):
-      status  {"stage": "retrieving" | "generating"}
+      status  {"stage": "retrieving"}
+      status  {"stage": "generating", "excerpts": n, "documents": [names][, "cached": true]}
       token   {"text": "..."}                    zero or more
       done    {"answer", "found", "sources"[, "retrieved"]}   final, authoritative
       error   {"message": "..."}                 instead of done
@@ -270,14 +302,28 @@ def answer_events(
             timer.log(hits, found=False)
             yield {"type": "done", **answer_dict(NOT_FOUND, debug)}
             return
-        yield {"type": "status", "stage": "generating"}
+        messages = build_messages(req, hits)
+        key = cache.key(messages) if cache is not None else ""
+        cached = cache.get(key) if cache is not None else None
+        if cached is not None:
+            timer.cached = True
+            timer.word()
+            yield reading_status(hits, cached=True)
+            yield {"type": "token", "text": cached}
+            result = finalise(cached, hits, req.mode)
+            timer.log(hits, found=result.found)
+            yield {"type": "done", **answer_dict(result, debug)}
+            return
+        yield reading_status(hits)
         parts: list[str] = []
-        for piece in llm.chat_stream(build_messages(req, hits)):
+        for piece in llm.chat_stream(messages):
             if piece.strip():
                 timer.word()
             parts.append(piece)
             yield {"type": "token", "text": piece}
         result = finalise("".join(parts), hits, req.mode)
+        if cache is not None and result.found:
+            cache.put(key, result.answer)
         timer.log(hits, found=result.found)
         yield {"type": "done", **answer_dict(result, debug)}
     except OllamaError as exc:

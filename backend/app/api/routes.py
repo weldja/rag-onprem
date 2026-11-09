@@ -10,11 +10,20 @@ from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import Engine, text
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.api.deps import AppSettings, get_db, get_embedder, get_llm, get_ollama, get_search
+from app.api.deps import (
+    AppSettings,
+    get_answer_cache,
+    get_db,
+    get_embedder,
+    get_llm,
+    get_ollama,
+    get_search,
+)
 from app.llm.base import ChatMessage, Embedder, LLMClient
 from app.llm.ollama import OllamaClient, OllamaError
 from app.llm.prompts import prompt_version
 from app.retrieval.answer import Request, answer_events, answer_question
+from app.retrieval.cache import AnswerCache
 from app.retrieval.service import Search
 
 log = logging.getLogger(__name__)
@@ -31,8 +40,9 @@ class AskRequest(BaseModel):
     # Earlier turns of this conversation, oldest first. The client keeps the
     # conversation; the server stores nothing. Only the last few are used.
     history: list[Turn] = Field(default_factory=list, max_length=20)
-    # Limit the search to these documents (ones the user can't see are ignored).
-    document_ids: list[int] | None = Field(default=None, max_length=20)
+    # Limit the search to these documents (ones the user can't see are ignored),
+    # e.g. a folder of a file share picked in the sidebar.
+    document_ids: list[int] | None = Field(default=None, max_length=2000)
     mode: Literal["answer", "summary"] = "answer"
     # Include every retrieved chunk and the prompt version (used by evals).
     debug: bool = False
@@ -64,6 +74,11 @@ class AskResponse(BaseModel):
     sources: list[SourceOut]
     retrieved: list[SourceOut] | None = None
     prompt_version: str | None = None
+
+
+def _cache(body: AskRequest, cache: AnswerCache) -> AnswerCache | None:
+    # Debug requests come from the eval, which must measure the model every time.
+    return None if body.debug else cache
 
 
 def _request(body: AskRequest, settings: AppSettings) -> Request:
@@ -119,6 +134,7 @@ def ask(
     search: Annotated[Search, Depends(get_search)],
     llm: Annotated[LLMClient, Depends(get_llm)],
     embedder: Annotated[Embedder, Depends(get_embedder)],
+    cache: Annotated[AnswerCache, Depends(get_answer_cache)],
     settings: AppSettings,
 ) -> AskResponse:
     ids = body.document_ids
@@ -129,6 +145,7 @@ def ask(
             spread=(lambda: search.spread(ids or [])) if body.mode == "summary" else None,
             llm=llm,
             embedder=embedder,
+            cache=_cache(body, cache),
         )
     except OllamaError as exc:
         log.error("Model call failed: %s", exc)
@@ -157,6 +174,7 @@ def ask_stream(
     search: Annotated[Search, Depends(get_search)],
     llm: Annotated[LLMClient, Depends(get_llm)],
     embedder: Annotated[Embedder, Depends(get_embedder)],
+    cache: Annotated[AnswerCache, Depends(get_answer_cache)],
     settings: AppSettings,
 ) -> StreamingResponse:
     """Server-sent events; see app.retrieval.answer.answer_events for the protocol."""
@@ -168,6 +186,7 @@ def ask_stream(
         llm=llm,
         embedder=embedder,
         debug=body.debug,
+        cache=_cache(body, cache),
     )
     return StreamingResponse(
         _sse(events),

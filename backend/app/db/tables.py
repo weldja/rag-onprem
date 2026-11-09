@@ -9,6 +9,7 @@ from sqlalchemy import (
     Column,
     Computed,
     DateTime,
+    Float,
     ForeignKey,
     Identity,
     Integer,
@@ -42,10 +43,34 @@ documents = Table(
     Column("uploaded_by", BigInteger, ForeignKey("users.id", ondelete="SET NULL"), nullable=True),
     Column("created_at", DateTime(timezone=True), server_default=func.now(), nullable=False),
     Column("updated_at", DateTime(timezone=True), server_default=func.now(), nullable=False),
-    UniqueConstraint("sha256", name="uq_documents_sha256"),
+    # File-share documents (migration 0005): indexed in place from a read-only
+    # mount. NULL for uploads. sha256 is unique among uploads only (partial
+    # index uq_documents_upload_sha256): a share may hold the same file twice.
+    Column("source_id", BigInteger, ForeignKey("sources.id", ondelete="CASCADE"), nullable=True),
+    Column("source_path", Text, nullable=True),  # POSIX path relative to the share root
+    Column("source_mtime", Float, nullable=True),
+    UniqueConstraint("source_id", "source_path", name="uq_documents_source_path"),
     CheckConstraint(
         "status IN ('pending','processing','ready','failed')", name="ck_documents_status"
     ),
+)
+
+sources = Table(
+    "sources",
+    metadata,
+    Column("id", BigInteger, Identity(), primary_key=True),
+    Column("key", Text, nullable=False),  # share1, share2, ... from settings
+    Column("name", Text, nullable=False),
+    Column("root", Text, nullable=False),  # mount point inside the containers
+    Column("display_path", Text, nullable=False),
+    Column("active", Boolean, nullable=False, server_default="true"),
+    Column("last_scan_at", DateTime(timezone=True), nullable=True),
+    Column("last_scan_error", Text, nullable=True),
+    Column("scan_requested_at", DateTime(timezone=True), nullable=True),
+    Column("files_seen", Integer, nullable=False, server_default="0"),
+    Column("files_skipped", Integer, nullable=False, server_default="0"),
+    Column("created_at", DateTime(timezone=True), server_default=func.now(), nullable=False),
+    UniqueConstraint("key", name="uq_sources_key"),
 )
 
 chunks = Table(

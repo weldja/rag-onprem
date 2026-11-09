@@ -15,6 +15,7 @@ from app.retrieval.answer import (
     retrieval_query,
     strip_citations,
 )
+from app.retrieval.cache import AnswerCache
 from tests.fakes import FakeEmbedder, FakeLLM, chunk, fixed_retriever
 
 
@@ -253,3 +254,98 @@ def test_events_model_failure_yields_error() -> None:
         )
     )
     assert events[-1] == {"type": "error", "message": "The local model is unavailable."}
+
+
+# ------------------------------------------------------------ answer cache
+
+
+def test_generating_status_says_what_the_model_reads() -> None:
+    hits = [chunk(1, filename="a.pdf"), chunk(2, filename="b.docx"), chunk(3, filename="a.pdf")]
+    events = list(
+        answer_events(
+            ask("q"), retrieve=fixed_retriever(hits), llm=FakeLLM("A [1]."), embedder=FakeEmbedder()
+        )
+    )
+    status = [e for e in events if e["type"] == "status"][1]
+    assert status == {
+        "type": "status",
+        "stage": "generating",
+        "excerpts": 3,
+        "documents": ["a.pdf", "b.docx"],
+    }
+
+
+def test_repeated_question_is_answered_from_the_cache() -> None:
+    cache = AnswerCache(10, 60)
+    hits = [chunk(1)]
+    first = list(
+        answer_events(
+            ask("q"),
+            retrieve=fixed_retriever(hits),
+            llm=FakeLLM("First [1]."),
+            embedder=FakeEmbedder(),
+            cache=cache,
+        )
+    )
+    down = FakeLLM("never used", fail=True)
+    second = list(
+        answer_events(
+            ask("q"),
+            retrieve=fixed_retriever(hits),
+            llm=down,
+            embedder=FakeEmbedder(),
+            cache=cache,
+        )
+    )
+    assert second[-1]["answer"] == first[-1]["answer"]
+    assert second[-1]["sources"] == first[-1]["sources"]
+    assert any(e.get("cached") for e in second if e["type"] == "status")
+    assert down.messages == []  # the model was not called
+    result = answer_question(
+        ask("q"), retrieve=fixed_retriever(hits), llm=down, embedder=FakeEmbedder(), cache=cache
+    )
+    assert result.answer == "First [1]."
+
+
+def test_cache_misses_when_the_excerpts_change() -> None:
+    """Edited or deleted documents, or another user's different (ACL-filtered)
+    retrieval, change the excerpts and so never reuse an answer."""
+    cache = AnswerCache(10, 60)
+    answer_question(
+        ask("q"),
+        retrieve=fixed_retriever([chunk(1, text="old policy")]),
+        llm=FakeLLM("Old [1]."),
+        embedder=FakeEmbedder(),
+        cache=cache,
+    )
+    result = answer_question(
+        ask("q"),
+        retrieve=fixed_retriever([chunk(1, text="new policy")]),
+        llm=FakeLLM("New [1]."),
+        embedder=FakeEmbedder(),
+        cache=cache,
+    )
+    assert result.answer == "New [1]."
+
+
+def test_not_found_answers_are_not_cached() -> None:
+    cache = AnswerCache(10, 60)
+    answer_question(
+        ask("q"),
+        retrieve=fixed_retriever([chunk(1)]),
+        llm=FakeLLM(NOT_FOUND_ANSWER),
+        embedder=FakeEmbedder(),
+        cache=cache,
+    )
+    assert len(cache) == 0
+
+
+def test_cache_evicts_oldest_and_expires() -> None:
+    cache = AnswerCache(2, 60)
+    for k in ("a", "b", "c"):
+        cache.put(k, k.upper())
+    assert cache.get("a") is None and cache.get("c") == "C"
+    expired = AnswerCache(2, 0.000001)
+    expired.put("a", "A")
+    assert expired.get("a") is None
+    assert AnswerCache(0, 60).get("x") is None

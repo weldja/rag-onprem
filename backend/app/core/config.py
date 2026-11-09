@@ -1,6 +1,8 @@
 """Application settings, read from environment variables (see .env.example)."""
 
+from dataclasses import dataclass
 from functools import lru_cache
+from pathlib import PurePosixPath
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -44,6 +46,30 @@ class Settings(BaseSettings):
     ocr_max_pages: int = Field(default=300, gt=0)
     ocr_timeout_s: float = Field(default=120.0, gt=0)
 
+    # File shares indexed in place (read-only). Up to three, each bind-mounted by
+    # compose from SHARE_n_PATH on the host to /shares/n in api and worker. A
+    # share is enabled when SHARE_n_PATH is set. Its documents are visible to
+    # SHARE_n_GROUPS (comma-separated app group names, created if missing).
+    share_1_path: str = ""
+    share_1_name: str = ""
+    share_1_display_path: str = ""  # shown to users; defaults to SHARE_1_PATH
+    share_1_groups: str = "All staff"
+    share_1_exclude: str = ""  # comma-separated globs on the relative path, e.g. HR/*
+    share_2_path: str = ""
+    share_2_name: str = ""
+    share_2_display_path: str = ""
+    share_2_groups: str = "All staff"
+    share_2_exclude: str = ""
+    share_3_path: str = ""
+    share_3_name: str = ""
+    share_3_display_path: str = ""
+    share_3_groups: str = "All staff"
+    share_3_exclude: str = ""
+    shares_mount_dir: str = "/shares"
+    # How often the worker looks for new, changed and deleted files. A scan only
+    # stats files; it reads a file again only when its size or time changed.
+    share_scan_interval_s: float = Field(default=300.0, ge=30)
+
     # Worker
     worker_poll_s: float = Field(default=2.0, gt=0)
     job_stale_after_s: float = Field(default=1800.0, gt=0)
@@ -68,6 +94,13 @@ class Settings(BaseSettings):
     # first word, so a summary reads as many as a question (TOP_K), as rag-claude
     # does on-prem. Raise it for fuller summaries on a fast GPU.
     summary_chunks: int = Field(default=6, gt=0, le=40)
+
+    # Answers kept in api memory, keyed on the exact excerpts, history and
+    # question sent to the model. A repeated question that retrieves the same
+    # excerpts is answered at once. Changed or deleted documents change the
+    # excerpts and so miss the cache. 0 disables it.
+    answer_cache_entries: int = Field(default=500, ge=0)
+    answer_cache_ttl_s: float = Field(default=86400.0, gt=0)
 
     # How long the API waits at startup for its models to appear in Ollama.
     startup_wait_s: float = Field(default=120.0, ge=0)
@@ -112,6 +145,43 @@ class Settings(BaseSettings):
     def _empty_is_none(cls, value: object) -> object:
         # Compose passes unset variables through as "".
         return None if value == "" else value
+
+    def shares(self) -> list["ShareConfig"]:
+        """Configured file shares, in order."""
+        out = []
+        for n in (1, 2, 3):
+            host_path = str(getattr(self, f"share_{n}_path")).strip()
+            if not host_path:
+                continue
+            name = str(getattr(self, f"share_{n}_name")).strip()
+            display = str(getattr(self, f"share_{n}_display_path")).strip()
+            out.append(
+                ShareConfig(
+                    key=f"share{n}",
+                    name=name
+                    or PurePosixPath(host_path.replace("\\", "/").rstrip("/")).name
+                    or f"Share {n}",
+                    root=f"{self.shares_mount_dir.rstrip('/')}/{n}",
+                    display_path=display or host_path,
+                    groups=_csv(getattr(self, f"share_{n}_groups")),
+                    exclude=_csv(getattr(self, f"share_{n}_exclude")),
+                )
+            )
+        return out
+
+
+@dataclass(frozen=True)
+class ShareConfig:
+    key: str
+    name: str
+    root: str
+    display_path: str
+    groups: list[str]
+    exclude: list[str]
+
+
+def _csv(value: object) -> list[str]:
+    return [part.strip() for part in str(value or "").split(",") if part.strip()]
 
 
 @lru_cache

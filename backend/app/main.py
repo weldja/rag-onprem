@@ -10,9 +10,11 @@ from app.api.auth import router as auth_router
 from app.api.deps import get_directory, get_ollama, get_reranker
 from app.api.documents import router as documents_router
 from app.api.routes import router
+from app.api.sources import router as sources_router
 from app.auth.sessions import purge_expired
 from app.core.config import get_settings
 from app.db.engine import get_engine
+from app.ingestion.shares import sync_sources
 from app.llm.ollama import OllamaError
 
 log = logging.getLogger(__name__)
@@ -62,6 +64,8 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     purged = purge_expired(get_engine())
     if purged:
         log.info("Removed %d expired session(s)", purged)
+    # So the sidebar shows configured shares before the worker's first scan.
+    sync_sources(get_engine(), get_settings().shares())
     yield
     get_ollama().close()
 
@@ -97,6 +101,7 @@ def create_app() -> FastAPI:
     app.include_router(router)
     app.include_router(auth_router)
     app.include_router(documents_router)
+    app.include_router(sources_router)
     return app
 
 

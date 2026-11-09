@@ -36,6 +36,10 @@
   box-sizing: border-box;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 body {
   margin: 0;
   background: var(--bg);
@@ -124,6 +128,16 @@ a {
 
 /* ------------------------------------------------------------- layout */
 
+/* The Ask view fills the window: sidebar and conversation scroll separately,
+   the question box stays at the bottom. Other tabs scroll as a page. */
+.app.fill {
+  height: 100vh;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 .topbar {
   display: flex;
   align-items: center;
@@ -208,13 +222,345 @@ label.check {
   color: var(--muted);
 }
 
+/* ------------------------------------------------------------ sidebar */
+
+.ask-layout {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr);
+}
+
+.sidebar-wrap {
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+}
+
+.sidebar-toggle,
+.sidebar-backdrop {
+  display: none;
+}
+
+.sidebar {
+  padding: 12px;
+  display: grid;
+  gap: 16px;
+  align-content: start;
+  font-size: 0.92em;
+}
+
+.sidebar-head {
+  display: grid;
+  gap: 8px;
+}
+
+.sidebar-head h2 {
+  font-size: 1em;
+  margin: 0;
+}
+
+.sidebar-head input {
+  width: 100%;
+}
+
+.src {
+  display: grid;
+  gap: 4px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+.src.inactive {
+  opacity: 0.7;
+}
+
+.src-head {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  border-radius: 6px;
+}
+
+.src-head h3 {
+  flex: 1;
+  margin: 0;
+  font-size: 1em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.src-path {
+  display: block;
+  font: 0.85em/1.4 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 6px;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+}
+
+.src-counts {
+  margin: 2px 0 0;
+}
+
+.src-error {
+  margin: 4px 0;
+  padding: 6px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  font-size: 0.9em;
+}
+
+.meta.small,
+.small {
+  font-size: 0.85em;
+  margin: 0;
+}
+
+.dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--muted);
+}
+
+.dot.ready {
+  background: var(--ok);
+}
+
+.dot.busy {
+  background: var(--warn);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+.dot.failed {
+  background: var(--danger);
+}
+
+.tree {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 12px;
+}
+
+.src > .tree {
+  padding-left: 0;
+}
+
+.file,
+.folder-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 4px;
+  min-height: 28px;
+}
+
+.file:hover,
+.folder-row:hover,
+.file:focus-within,
+.folder-row:focus-within {
+  background: var(--bg);
+}
+
+.file.selected,
+.folder-row.selected,
+.src-head.selected {
+  background: var(--accent-soft);
+}
+
+.file-name,
+.twisty {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  text-align: left;
+  border: none;
+  background: none;
+  padding: 2px 4px;
+}
+
+.file-name {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-name:disabled {
+  opacity: 0.6;
+}
+
+.folder-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chevron {
+  width: 1em;
+  color: var(--muted);
+}
+
+.count {
+  color: var(--muted);
+  font-size: 0.85em;
+}
+
+.row-actions {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+  font-size: 0.85em;
+  visibility: hidden;
+}
+
+.file:hover .row-actions,
+.folder-row:hover .row-actions,
+.file:focus-within .row-actions,
+.folder-row:focus-within .row-actions,
+.file.selected .row-actions,
+.folder-row.selected .row-actions {
+  visibility: visible;
+}
+
+.row-actions a {
+  padding: 2px 6px;
+}
+
 /* --------------------------------------------------------------- chat */
 
 .chat {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.chat-inner {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 16px;
   display: flex;
   flex-direction: column;
   gap: 16px;
-  padding-bottom: 120px;
+}
+
+.question-scope {
+  display: block;
+  font-size: 0.8em;
+  color: var(--muted);
+}
+
+/* "Thinking": animated dots, what's happening, and seconds elapsed. */
+.thinking {
+  color: var(--muted);
+}
+
+.thinking-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.thinking-docs {
+  margin: 4px 0 0 34px;
+  font-size: 0.85em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dots {
+  display: inline-flex;
+  gap: 4px;
+  width: 26px;
+}
+
+.dots i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: bounce 1.2s ease-in-out infinite;
+}
+
+.dots i:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.dots i:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+.elapsed {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.85em;
+}
+
+/* Blinking cursor after the text while the answer is still being written. */
+.answer-text.streaming > :last-child::after {
+  content: "";
+  display: inline-block;
+  width: 0.5em;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: var(--accent);
+  animation: blink 1s steps(1) infinite;
+}
+
+.answer-meta {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 0.8em;
+}
+
+@keyframes bounce {
+  0%,
+  80%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.4;
+  }
+  40% {
+    transform: translateY(-4px);
+    opacity: 1;
+  }
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dots i,
+  .dot.busy,
+  .answer-text.streaming > :last-child::after {
+    animation: none;
+  }
 }
 
 .empty {
@@ -330,20 +676,45 @@ label.check {
 }
 
 .composer {
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+  padding: 10px 16px 12px;
+}
+
+.composer-row,
+.scope-chip {
+  max-width: 868px;
+  margin: 0 auto;
+}
+
+.composer-row {
   display: flex;
   gap: 8px;
-  padding: 12px max(16px, calc((100vw - 980px) / 2 + 16px));
-  background: var(--bg);
-  border-top: 1px solid var(--border);
+  align-items: flex-end;
 }
 
 .composer textarea {
   flex: 1;
   resize: vertical;
+  max-height: 40vh;
+}
+
+.scope-chip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 4px 4px 4px 10px;
+  border-radius: 6px;
+  background: var(--accent-soft);
+  font-size: 0.9em;
+}
+
+.scope-chip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ---------------------------------------------------------- documents */
@@ -452,5 +823,39 @@ label.check {
   }
   .actions {
     white-space: normal;
+  }
+}
+
+/* Narrow screens: the sidebar slides over the conversation. */
+@media (max-width: 800px) {
+  .ask-layout {
+    grid-template-columns: minmax(0, 1fr);
+    position: relative;
+  }
+  .sidebar-toggle {
+    display: inline-block;
+  }
+  .sidebar-wrap {
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: min(320px, 85vw);
+    z-index: 3;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+    visibility: hidden;
+  }
+  .sidebar-open .sidebar-wrap {
+    transform: none;
+    visibility: visible;
+  }
+  .sidebar-open .sidebar-backdrop {
+    display: block;
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    background: rgb(0 0 0 / 0.3);
+  }
+  .row-actions {
+    visibility: visible;
   }
 }
