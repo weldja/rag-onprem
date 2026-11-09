@@ -1,4 +1,5 @@
 import logging
+import threading
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -53,9 +54,20 @@ def wait_for_models() -> None:
         time.sleep(2)
 
 
+def load_models() -> None:
+    """Runs in the background at start-up; a failure only costs the first question time."""
+    started = time.monotonic()
+    try:
+        get_ollama().load_models()
+        log.info("Models loaded in %.1f s", time.monotonic() - started)
+    except OllamaError as exc:
+        log.warning("Could not preload the models (the first question will be slower): %s", exc)
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     wait_for_models()
+    threading.Thread(target=load_models, name="load-models", daemon=True).start()
     directory = get_directory()  # validates LDAP settings now, not at the first sign-in
     if directory is not None:
         log.info("Directory sign-in enabled: %s", get_settings().ldap_url)

@@ -155,6 +155,18 @@ class OllamaClient:
             )
         return vectors
 
+    def load_models(self) -> None:
+        """Load both models into memory now, so the first question doesn't wait
+        for them (11 s measured for bge-m3 on a laptop). An empty chat loads the
+        LLM without generating; the options match real requests, or Ollama
+        would load it again for the first question."""
+        self.embed(["warm-up"])
+        self._request(
+            "POST",
+            "/api/chat",
+            {"model": self.llm_model, "messages": [], "stream": False, "options": self._options},
+        )
+
     def list_models(self) -> list[str]:
         data = self._request("GET", "/api/tags")
         return [m["name"] for m in data.get("models", []) if isinstance(m, dict) and "name" in m]

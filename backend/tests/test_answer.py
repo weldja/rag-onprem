@@ -340,12 +340,17 @@ def test_not_found_answers_are_not_cached() -> None:
     assert len(cache) == 0
 
 
-def test_cache_evicts_oldest_and_expires() -> None:
+def test_cache_evicts_oldest_and_expires(monkeypatch: pytest.MonkeyPatch) -> None:
     cache = AnswerCache(2, 60)
     for k in ("a", "b", "c"):
         cache.put(k, k.upper())
     assert cache.get("a") is None and cache.get("c") == "C"
-    expired = AnswerCache(2, 0.000001)
-    expired.put("a", "A")
-    assert expired.get("a") is None
+    now = [1000.0]  # the real clock may not move between two calls
+    monkeypatch.setattr("app.retrieval.cache.time.monotonic", lambda: now[0])
+    expiring = AnswerCache(2, 60)
+    expiring.put("a", "A")
+    now[0] += 59
+    assert expiring.get("a") == "A"
+    now[0] += 2
+    assert expiring.get("a") is None
     assert AnswerCache(0, 60).get("x") is None

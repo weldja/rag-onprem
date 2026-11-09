@@ -98,6 +98,30 @@ def test_think_flag_sent_only_when_configured() -> None:
     assert [b.get("think", "unset") for b in bodies] == [False, False, "unset"]
 
 
+def test_load_models_uses_the_same_options_as_requests() -> None:
+    seen: list[tuple[str, dict[str, object]]] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen.append((req.url.path, json.loads(req.content)))
+        if req.url.path == "/api/embed":
+            return httpx.Response(200, json={"embeddings": [[0.1]]})
+        return httpx.Response(200, json={"message": {"content": ""}, "done": True})
+
+    OllamaClient(
+        "http://o:11434",
+        llm_model="m",
+        embed_model="e",
+        num_ctx=4096,
+        max_tokens=768,
+        embed_num_gpu=0,
+        transport=httpx.MockTransport(handler),
+    ).load_models()
+    (embed_path, embed), (chat_path, chat) = seen
+    assert embed_path == "/api/embed" and embed["options"] == {"num_gpu": 0}
+    assert chat_path == "/api/chat" and chat["messages"] == []
+    assert chat["options"] == {"temperature": 0.1, "num_ctx": 4096, "num_predict": 768}
+
+
 def test_embed_num_gpu_setting() -> None:
     from app.core.config import Settings
 

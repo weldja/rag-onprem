@@ -69,6 +69,7 @@ Configuration lives in `.env`, which is readable only by its owner. After changi
 | `ANSWER_CACHE_ENTRIES` | answers kept in memory for repeated questions (default 500; `0` turns it off). |
 | `INDEX_PAUSE_MAX_S` | longest indexing waits (per excerpt) while answers are being written (default 120). |
 | `EMBED_BATCH` | excerpts per embedding request while indexing (default 1, so questions never queue behind a batch). |
+| `LLAMA_ARG_CACHE_RAM` | the model service's prompt cache in server memory, in MiB (default `0`, off: on small machines saving it slowed every question by up to 5 s). Try `8192` on a large server where many users ask about the same documents. The api loads both models when it starts, so the first question doesn't wait for them. |
 | `PASSWORD_MIN_LENGTH` | minimum length of local passwords (default 12, lowest 1). Any characters are allowed, including spaces. Lowering it makes passwords easier to guess. |
 | `LLM_MODEL`, `EMBED_MODEL`, `RAG_VERSION` | set by the bundle. Don't change them; the models are built into the images. |
 

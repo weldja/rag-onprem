@@ -49,6 +49,10 @@ services:
       OLLAMA_KEEP_ALIVE: "-1"
       OLLAMA_CONTEXT_LENGTH: ${LLM_NUM_CTX:-8192}
       OLLAMA_NO_CLOUD: "1"
+      # Prompt cache in host memory (MiB, 0 = off). Saving it took 0.1-1.5 s per
+      # question, 5 s after the server sat idle; the in-model cache still reuses
+      # the start of the previous prompt.
+      LLAMA_ARG_CACHE_RAM: ${LLAMA_ARG_CACHE_RAM:-0}
     networks: [backend]
     restart: unless-stopped
 
