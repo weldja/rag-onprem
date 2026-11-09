@@ -172,6 +172,27 @@ model already loaded, `num_ctx` 8192:
 - Not yet measured: the 7B entirely on an 8 GB+ GPU. Measure it on the first customer-class GPU
   and record it here, for both a question and a summary.
 
+## Real documents (2026-11-09, laptop install, Qwen3 4B, 14 documents)
+
+40 hand-written cases against the customer-style documents on the laptop install, asked as a
+non-admin user (cases and answers kept out of the repo; they quote those documents):
+retrieval recall 1.0, citation recall 0.971, citation precision 0.947, answer accuracy 0.971,
+abstention 1.0 (4/4), follow-up 1/1, summaries 1/2. Median 14 s per question.
+
+- **Summary of a short document skipped a section (fixed).** Complaints_Procedure.docx is 7
+  small chunks; sampling 6 dropped the one with the response deadlines. A document that fits in
+  per-document chunks × `CHUNK_SIZE` characters is now read whole (case `summary-short-sections`).
+- **Form-style DOCX loses context between chunks.** The priority field of a change-request form
+  sat in a chunk without the form's title, so "what priority was the X change request given?"
+  never retrieved it; the model correctly said not found. Merged table cells are repeated once
+  per cell, which pads chunks. Candidates: collapse repeated cells in the DOCX loader; prefix
+  chunks with the document title. Both need a re-index and the full eval.
+- **Long summaries sometimes have no `[n]` markers** (leaf/spine procedure: cited in 2 of 4
+  runs, content correct each time). Re-check with the shorter summary prompt.
+- **One PDF (ENC Administrator Manual R11.3) extracts without spaces between words**
+  ("EnsembleControllerR11.3AdministratorManual"). Both questions on it still passed, but
+  keyword search can't match words run together. Worth a look at pypdf's layout mode.
+
 ## Before changing prompts or retrieval
 
 1. Run `bash scripts/eval.sh --detach --label <change>` and compare with the last shipped run.

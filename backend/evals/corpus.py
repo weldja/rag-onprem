@@ -143,6 +143,33 @@ def contract_md() -> bytes:
 """
 
 
+def complaints_docx() -> bytes:
+    """A short document of many small sections (one chunk each). Sampling 6 of
+    its 9 chunks for a summary skipped sections 1, 4 and 7, so the response
+    deadline and record retention below must appear in a summary."""
+    import docx
+
+    d = docx.Document()
+    d.add_heading("Customer Complaints Procedure", level=0)
+    d.add_paragraph("Reference CCP-2 | Owner: Customer Service Manager")
+    sections = {
+        "Our commitment": "We want to hear when our service falls short so we can fix it.",
+        "How to complain": "Write to the customer service team or use the feedback form.",
+        "Acknowledgement": "Every complaint is acknowledged within 3 working days.",
+        "Full response": "A full written response is sent within 20 working days.",
+        "Escalation": "Customers who remain unhappy may ask a director to review the case.",
+        "Billing disputes": "Disputed invoices are put on hold while a complaint is open.",
+        "Record keeping": "Complaint records are kept for 4 years and reviewed every quarter.",
+        "Contact": "Customer service can be reached on extension 3100.",
+    }
+    for heading, text in sections.items():
+        d.add_heading(heading, level=1)
+        d.add_paragraph(text)
+    buf = io.BytesIO()
+    d.save(buf)
+    return buf.getvalue()
+
+
 CORPUS = {
     "northwind-handbook-2026.pdf": handbook_pdf,
     "it-security-policy.docx": security_docx,
@@ -150,6 +177,7 @@ CORPUS = {
     "onboarding-2026.pptx": onboarding_pptx,
     "office-facilities.html": facilities_html,
     "acme-cleaning-contract.md": contract_md,
+    "complaints-procedure.docx": complaints_docx,
 }
 
 

@@ -71,5 +71,7 @@
   {"id": "summary-it-security", "question": "Summarise this document.", "summary_of": "it-security-policy.docx",
    "expect": [{"document": "it-security-policy.docx"}], "answer_any": [["14"], ["encrypt"]]},
   {"id": "summary-handbook", "question": "Summarise this document.", "summary_of": "northwind-handbook-2026.pdf",
-   "expect": [{"document": "northwind-handbook-2026.pdf"}], "answer_any": [["27"], ["31 March"]]}
+   "expect": [{"document": "northwind-handbook-2026.pdf"}], "answer_any": [["27"], ["31 March"]]},
+  {"id": "summary-short-sections", "question": "Summarise this document.", "summary_of": "complaints-procedure.docx",
+   "expect": [{"document": "complaints-procedure.docx"}], "answer_any": [["20 working days", "twenty working days"], ["4 years", "four years"]]}
 ]
