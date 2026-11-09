@@ -199,6 +199,15 @@ def test_spread_samples_in_reading_order_within_acl(db: Engine, world: dict[str,
         "budget part 6",
         "budget part 9",
     ]
+    whole = document_spread(
+        db,
+        [world["budget"]],
+        viewer=fiona,
+        embed_model=SETTINGS.embed_model,
+        k_per_document=4,
+        max_chars_per_document=4000,
+    )
+    assert len(whole) == 10  # all of a short document fits, so none is skipped
     harry = _viewer(db, world["harry"])
     assert (
         document_spread(

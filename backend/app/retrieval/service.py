@@ -64,4 +64,7 @@ class DbSearch:
             viewer=self._viewer,
             embed_model=self._s.embed_model,
             k_per_document=per_doc,
+            # No more text than per_doc full-size chunks: a short document is
+            # read whole without making the summary any slower.
+            max_chars_per_document=per_doc * self._s.chunk_size,
         )

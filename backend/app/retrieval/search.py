@@ -187,6 +187,15 @@ def spread_positions(n: int, k: int) -> list[int]:
     return sorted({round(i * (n - 1) / (k - 1)) for i in range(k)})
 
 
+def summary_positions(lengths: Sequence[int], k: int, max_chars: int | None) -> list[int]:
+    """Which chunks of one document a summary reads: all of them when their
+    text fits in max_chars (a short document made of small chunks), otherwise
+    k spread evenly. Sampling a short document skipped a whole section."""
+    if max_chars is not None and sum(lengths) <= max_chars:
+        return list(range(len(lengths)))
+    return spread_positions(len(lengths), k)
+
+
 def document_spread(
     engine: Engine,
     document_ids: Sequence[int],
@@ -194,9 +203,11 @@ def document_spread(
     viewer: Viewer,
     embed_model: str,
     k_per_document: int,
+    max_chars_per_document: int | None = None,
 ) -> list[RetrievedChunk]:
     """Chunks sampled evenly across each document, in reading order, for
     summaries, where similarity search would only find one corner of the text.
+    A document whose whole text fits in max_chars_per_document is read in full.
     Ported in spirit from rag-claude's _retrieve_document_spread."""
     if not document_ids:
         return []
@@ -208,19 +219,21 @@ def document_spread(
     )
     with engine.connect() as conn:
         rows = conn.execute(
-            select(chunks.c.id, chunks.c.document_id)
+            select(chunks.c.id, chunks.c.document_id, func.length(chunks.c.text).label("chars"))
             .join(documents, documents.c.id == chunks.c.document_id)
             .where(visible)
             .order_by(chunks.c.document_id, chunks.c.ordinal)
         ).all()
-        by_doc: dict[int, list[int]] = {}
+        by_doc: dict[int, list[tuple[int, int]]] = {}
         for r in rows:
-            by_doc.setdefault(r.document_id, []).append(r.id)
+            by_doc.setdefault(r.document_id, []).append((r.id, r.chars))
         chosen = [
-            ids[i]
+            doc_chunks[i][0]
             for doc_id in document_ids
-            if (ids := by_doc.get(doc_id))
-            for i in spread_positions(len(ids), k_per_document)
+            if (doc_chunks := by_doc.get(doc_id))
+            for i in summary_positions(
+                [chars for _, chars in doc_chunks], k_per_document, max_chars_per_document
+            )
         ]
         if not chosen:
             return []

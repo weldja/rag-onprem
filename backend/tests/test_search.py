@@ -2,7 +2,13 @@ import pytest
 
 from app.core.config import Settings
 from app.retrieval.rerank import rerank
-from app.retrieval.search import rrf_merge, select_hits, spread_positions, to_or_tsquery
+from app.retrieval.search import (
+    rrf_merge,
+    select_hits,
+    spread_positions,
+    summary_positions,
+    to_or_tsquery,
+)
 from tests.fakes import FakeReranker, chunk
 
 
@@ -33,6 +39,16 @@ def test_rerank_of_nothing_is_nothing() -> None:
 )
 def test_spread_positions(n: int, k: int, expected: list[int]) -> None:
     assert spread_positions(n, k) == expected
+
+
+def test_short_document_is_summarised_in_full() -> None:
+    # 7 small sections (the real Complaints_Procedure.docx shape): sampling 6
+    # skipped the section with the response deadlines.
+    small = [80, 200, 300, 350, 300, 250, 200]
+    assert summary_positions(small, 6, 6000) == list(range(7))
+    assert summary_positions(small, 6, None) == spread_positions(7, 6)
+    big = [1000] * 40
+    assert summary_positions(big, 6, 6000) == spread_positions(40, 6)
 
 
 def test_empty_env_values_mean_unset() -> None:
