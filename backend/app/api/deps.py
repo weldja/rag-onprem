@@ -1,6 +1,6 @@
 """FastAPI dependencies. Tests override these with fakes."""
 
-from functools import lru_cache
+from functools import lru_cache, partial
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, Request, status
@@ -10,7 +10,9 @@ from app.auth import sessions
 from app.auth.acl import Viewer
 from app.auth.ldap import Directory, LdapDirectory
 from app.core.config import Settings, get_settings
+from app.db import priority
 from app.db.engine import get_engine
+from app.db.priority import Answering
 from app.llm.base import Embedder, LLMClient
 from app.llm.ollama import OllamaClient
 from app.retrieval.cache import AnswerCache
@@ -50,6 +52,11 @@ def get_embedder() -> Embedder:
 
 def get_db() -> Engine:
     return get_engine()
+
+
+def get_answering() -> Answering:
+    """Marks an answer as in progress so the worker pauses indexing."""
+    return partial(priority.answering, get_engine())
 
 
 @lru_cache

@@ -67,6 +67,8 @@ Configuration lives in `.env`, which is readable only by its owner. After changi
 | `EMBED_NUM_GPU`, `LLM_NUM_CTX`, `OLLAMA_KV_CACHE_TYPE` | `0` keeps the search model on the CPU so it never displaces the answer model on a small GPU; context window of the answer model; `q8_0` halves the model's working memory so it fits a small card. Set automatically on a GPU under 6 GB. |
 | `SHARE_1_PATH` ... `SHARE_3_PATH` and related | file shares indexed in place; see **File shares** below. |
 | `ANSWER_CACHE_ENTRIES` | answers kept in memory for repeated questions (default 500; `0` turns it off). |
+| `INDEX_PAUSE_MAX_S` | longest indexing waits (per excerpt) while answers are being written (default 120). |
+| `EMBED_BATCH` | excerpts per embedding request while indexing (default 1, so questions never queue behind a batch). |
 | `PASSWORD_MIN_LENGTH` | minimum length of local passwords (default 12, lowest 1). Any characters are allowed, including spaces. Lowering it makes passwords easier to guess. |
 | `LLM_MODEL`, `EMBED_MODEL`, `RAG_VERSION` | set by the bundle. Don't change them; the models are built into the images. |
 
@@ -127,6 +129,10 @@ How it behaves:
 - Share documents can't be deleted or re-shared in the app; change the share instead. Removing a
   share from `.env` keeps its documents until an administrator clicks **Remove** in the sidebar.
 - Backups contain the index, not the share's files; back the share up as you do today.
+- **The first scan of a large share can take hours** on a server without a big GPU (the
+  embedding model runs on the CPU, a few seconds per excerpt; a 1,000-page manual is about 1,000
+  excerpts). Questions can be asked meanwhile: indexing pauses while an answer is being written
+  (for at most `INDEX_PAUSE_MAX_S`, default 120 s, per excerpt), so it doesn't slow answers down.
 
 ### Directory sign-in (Active Directory / LDAP)
 

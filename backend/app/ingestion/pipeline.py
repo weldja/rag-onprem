@@ -6,6 +6,7 @@ half-written document visible to search.
 """
 
 import logging
+from collections.abc import Callable
 from itertools import batched
 from pathlib import Path
 
@@ -97,10 +98,18 @@ def copy_from_duplicate(engine: Engine, doc_id: int, sha256: str, embed_model: s
     return int(copied)
 
 
-def process_document(engine: Engine, doc_id: int, *, embedder: Embedder, settings: Settings) -> int:
+def process_document(
+    engine: Engine,
+    doc_id: int,
+    *,
+    embedder: Embedder,
+    settings: Settings,
+    before_embed: Callable[[], object] | None = None,
+) -> int:
     """Index (or re-index) a document. Returns the number of chunks written.
     Raises IngestError for permanent problems; model errors propagate so the
-    caller can retry."""
+    caller can retry. `before_embed` runs before each embedding request (the
+    worker uses it to let questions go first)."""
     with engine.connect() as conn:
         row = conn.execute(
             select(
@@ -146,6 +155,8 @@ def process_document(engine: Engine, doc_id: int, *, embedder: Embedder, setting
 
     vectors: list[list[float]] = []
     for batch in batched(pieces, settings.embed_batch):
+        if before_embed is not None:
+            before_embed()
         vectors.extend(embedder.embed([p.page_content for p in batch]))
     bad = {len(v) for v in vectors if len(v) != settings.embed_dim}
     if bad:

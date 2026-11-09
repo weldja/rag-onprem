@@ -13,12 +13,14 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.api.deps import (
     AppSettings,
     get_answer_cache,
+    get_answering,
     get_db,
     get_embedder,
     get_llm,
     get_ollama,
     get_search,
 )
+from app.db.priority import Answering
 from app.llm.base import ChatMessage, Embedder, LLMClient
 from app.llm.ollama import OllamaClient, OllamaError
 from app.llm.prompts import prompt_version
@@ -135,18 +137,20 @@ def ask(
     llm: Annotated[LLMClient, Depends(get_llm)],
     embedder: Annotated[Embedder, Depends(get_embedder)],
     cache: Annotated[AnswerCache, Depends(get_answer_cache)],
+    answering: Annotated[Answering, Depends(get_answering)],
     settings: AppSettings,
 ) -> AskResponse:
     ids = body.document_ids
     try:
-        result = answer_question(
-            _request(body, settings),
-            retrieve=search.retriever(ids),
-            spread=(lambda: search.spread(ids or [])) if body.mode == "summary" else None,
-            llm=llm,
-            embedder=embedder,
-            cache=_cache(body, cache),
-        )
+        with answering():
+            result = answer_question(
+                _request(body, settings),
+                retrieve=search.retriever(ids),
+                spread=(lambda: search.spread(ids or [])) if body.mode == "summary" else None,
+                llm=llm,
+                embedder=embedder,
+                cache=_cache(body, cache),
+            )
     except OllamaError as exc:
         log.error("Model call failed: %s", exc)
         raise HTTPException(status_code=503, detail="The local model is unavailable.") from exc
@@ -162,10 +166,13 @@ def ask(
     )
 
 
-def _sse(events: Iterator[dict[str, Any]]) -> Iterator[str]:
-    for event in events:
-        payload = {k: v for k, v in event.items() if k != "type"}
-        yield f"event: {event['type']}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+def _sse(events: Iterator[dict[str, Any]], answering: Answering) -> Iterator[str]:
+    # Held until the last event is sent or the client goes away (the generator
+    # is closed), so indexing pauses for exactly as long as the answer runs.
+    with answering():
+        for event in events:
+            payload = {k: v for k, v in event.items() if k != "type"}
+            yield f"event: {event['type']}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
 @router.post("/ask/stream")
@@ -175,6 +182,7 @@ def ask_stream(
     llm: Annotated[LLMClient, Depends(get_llm)],
     embedder: Annotated[Embedder, Depends(get_embedder)],
     cache: Annotated[AnswerCache, Depends(get_answer_cache)],
+    answering: Annotated[Answering, Depends(get_answering)],
     settings: AppSettings,
 ) -> StreamingResponse:
     """Server-sent events; see app.retrieval.answer.answer_events for the protocol."""
@@ -189,7 +197,7 @@ def ask_stream(
         cache=_cache(body, cache),
     )
     return StreamingResponse(
-        _sse(events),
+        _sse(events, answering),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

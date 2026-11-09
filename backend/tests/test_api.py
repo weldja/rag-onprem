@@ -1,4 +1,5 @@
 from collections.abc import Iterator
+from contextlib import contextmanager
 
 import pytest
 from fastapi.testclient import TestClient
@@ -26,7 +27,28 @@ def client(anon: TestClient) -> TestClient:
     # A fresh cache per test, so one test's answer is never another's hit.
     cache = AnswerCache(100, 60)
     app.dependency_overrides[deps.get_answer_cache] = lambda: cache
+    app.dependency_overrides[deps.get_answering] = lambda: answering
     return anon
+
+
+answering_calls: list[str] = []
+
+
+@contextmanager
+def answering() -> Iterator[None]:
+    answering_calls.append("start")
+    yield
+    answering_calls.append("end")
+
+
+def test_answers_mark_themselves_in_progress(client: TestClient) -> None:
+    override("Yes [1].", [chunk(1)])
+    answering_calls.clear()
+    client.post("/api/ask", json={"question": "q"})
+    assert answering_calls == ["start", "end"]
+    answering_calls.clear()
+    client.post("/api/ask/stream", json={"question": "q2"})
+    assert answering_calls == ["start", "end"]
 
 
 def override(reply: str, hits: list[RetrievedChunk], *, fail: bool = False) -> FakeLLM:

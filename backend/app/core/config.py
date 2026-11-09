@@ -32,7 +32,12 @@ class Settings(BaseSettings):
     # Ingestion
     chunk_size: int = Field(default=1000, gt=0)
     chunk_overlap: int = Field(default=150, ge=0)
-    embed_batch: int = Field(default=32, gt=0)
+    # Excerpts per embedding request while indexing. Ollama embeds them one at a
+    # time anyway, and a question can only start between requests, so keep it
+    # small (see app/db/priority.py).
+    embed_batch: int = Field(default=1, gt=0)
+    # Longest the worker pauses indexing (per excerpt) while answers are running.
+    index_pause_max_s: float = Field(default=120.0, ge=0)
     sheet_chunk_chars: int = Field(default=1800, gt=200)
     upload_dir: str = "/data/uploads"
     max_upload_mb: int = Field(default=50, gt=0)  # keep in step with nginx client_max_body_size

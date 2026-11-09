@@ -153,6 +153,22 @@ model already loaded, `num_ctx` 8192:
 - **Answer cache.** A repeated question that retrieves the same excerpts is answered from
   memory (key: model settings plus the exact messages, so ACLs and document changes are
   respected without invalidation). The eval sends `debug: true`, which bypasses the cache.
+- **Indexing delayed questions by minutes (2026-11-09, laptop install, real share).** While a
+  share was being indexed (bge-m3 on the CPU, batches of 32 excerpts, 100–200 s each), a
+  question's embedding waited in Ollama's queue behind the batch: one real question took 71 s to
+  retrieve, 91 s in total; direct probes waited 100 s and 213 s (0.06 s when idle). Indexing
+  also took the CPU, which slowed the prompt reading (12–17 s to the first word instead of ~8–13).
+  - Tried and rejected: a second model name for the same weights (`ollama cp`) shares the runner
+    and queue; `OLLAMA_NUM_PARALLEL=2` doubles the LLM's context memory and pushed 10% of the 4B
+    off the 4 GB card.
+  - Fix: one excerpt per embedding request (`EMBED_BATCH=1`; Ollama embeds them one at a time
+    anyway) and the worker waits before each one while an answer is in progress (a shared
+    advisory lock held by the api, `app/db/priority.py`). Retrieval during indexing: 0.1–0.2 s.
+    Answers during indexing now take as long as with the worker stopped (same question type:
+    16.5 s / 54.7 s vs 12.8 s / 54.1 s first word / total).
+  - What's left on this card is the model itself: ~120 prompt tok/s (6 excerpts, ~1,500 tokens:
+    ~12 s to the first word) and 13–30 output tok/s (a 550-token answer: ~40 s). A typed
+    "summarize X" retrieves 6 excerpts; the sidebar's Summary reads the document's own excerpts.
 - Not yet measured: the 7B entirely on an 8 GB+ GPU. Measure it on the first customer-class GPU
   and record it here, for both a question and a summary.
 

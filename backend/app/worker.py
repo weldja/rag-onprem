@@ -13,6 +13,7 @@ from types import FrameType
 from sqlalchemy import Engine
 
 from app.core.config import Settings, get_settings
+from app.db import priority
 from app.db.engine import get_engine
 from app.ingestion import registry, shares
 from app.ingestion.pipeline import IngestError, process_document, set_status
@@ -30,7 +31,13 @@ def run_once(engine: Engine, embedder: Embedder, settings: Settings) -> bool:
         return False
     log.info("Job %d: %s document %d (attempt %d)", job.id, job.kind, job.document_id, job.attempts)
     try:
-        process_document(engine, job.document_id, embedder=embedder, settings=settings)
+        process_document(
+            engine,
+            job.document_id,
+            embedder=embedder,
+            settings=settings,
+            before_embed=lambda: priority.wait_while_answering(engine, settings.index_pause_max_s),
+        )
     except IngestError as exc:
         log.warning("Job %d failed permanently: %s", job.id, exc)
         set_status(engine, job.document_id, "failed", str(exc))

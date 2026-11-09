@@ -304,6 +304,9 @@ File shares, sidebar and responsiveness:
   (`excerpts`, `documents`, `cached`), an elapsed timer, and "Answered in N s".
 - Answer cache (`app/retrieval/cache.py`, in api memory): keyed on model settings plus the exact
   messages, so it's ACL-safe and never stale; `debug` requests (the eval) bypass it.
+- Questions go before indexing (`app/db/priority.py`): the api holds a shared advisory lock
+  while answering; the worker checks it before each embedding request (`EMBED_BATCH=1`) and
+  waits. Without it, a question's embedding queued behind indexing in Ollama (71 s measured).
 - The worker reads `.env` (`env_file`) so indexing honours `EMBED_NUM_GPU=0`. Without it, indexing
   evicts the LLM from small GPUs.
 
