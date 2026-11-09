@@ -76,6 +76,28 @@ def test_embed_can_be_pinned_to_cpu() -> None:
     assert "options" not in bodies[1]  # default: Ollama decides
 
 
+def test_think_flag_sent_only_when_configured() -> None:
+    bodies: list[dict[str, object]] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(req.content))
+        if bodies[-1]["stream"]:
+            return httpx.Response(200, content=_ndjson({"message": {"content": "x"}, "done": True}))
+        return httpx.Response(200, json={"message": {"content": "x"}})
+
+    off = OllamaClient(
+        "http://o:11434",
+        llm_model="qwen3:1.7b",
+        embed_model="e",
+        think=False,
+        transport=httpx.MockTransport(handler),
+    )
+    off.chat([])
+    list(off.chat_stream([]))
+    make_client(httpx.MockTransport(handler)).chat([])
+    assert [b.get("think", "unset") for b in bodies] == [False, False, "unset"]
+
+
 def test_embed_num_gpu_setting() -> None:
     from app.core.config import Settings
 

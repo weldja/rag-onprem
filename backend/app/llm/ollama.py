@@ -41,10 +41,14 @@ class OllamaClient:
         max_tokens: int = 0,
         temperature: float = 0.1,
         embed_num_gpu: int | None = None,
+        think: bool | None = None,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.llm_model = llm_model
+        # Hybrid reasoning models (e.g. plain qwen3 tags) write a long hidden
+        # "thinking" section first unless told not to; None sends nothing.
+        self._think: dict[str, Any] = {} if think is None else {"think": think}
         self._embed_model = embed_model
         self._embed_options: dict[str, Any] = (
             {} if embed_num_gpu is None else {"num_gpu": embed_num_gpu}
@@ -91,6 +95,7 @@ class OllamaClient:
                 "messages": messages,
                 "stream": False,
                 "options": self._options,
+                **self._think,
             },
         )
         content = (data.get("message") or {}).get("content")
@@ -106,6 +111,7 @@ class OllamaClient:
             "messages": messages,
             "stream": True,
             "options": self._options,
+            **self._think,
         }
         try:
             with self._http.stream("POST", "/api/chat", json=payload) as resp:

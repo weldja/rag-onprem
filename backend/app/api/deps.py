@@ -32,13 +32,14 @@ def get_ollama() -> OllamaClient:
         max_tokens=s.llm_max_tokens,
         embed_num_gpu=s.embed_num_gpu,
         temperature=s.llm_temperature,
+        think=s.llm_think,
     )
 
 
 @lru_cache
 def get_answer_cache() -> AnswerCache:
     s = get_settings()
-    salt = f"{s.llm_model}|{s.llm_num_ctx}|{s.llm_max_tokens}|{s.llm_temperature}"
+    salt = f"{s.llm_model}|{s.llm_num_ctx}|{s.llm_max_tokens}|{s.llm_temperature}|{s.llm_think}"
     return AnswerCache(s.answer_cache_entries, s.answer_cache_ttl_s, salt=salt)
 
 

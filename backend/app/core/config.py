@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     # can run on a slow machine; as in rag-claude. 0 = no limit.
     llm_max_tokens: int = Field(default=1024, ge=0)
     llm_temperature: float = 0.1
+    # Sent as Ollama's "think" flag when set. LLM_THINK=false for hybrid
+    # reasoning models such as qwen3:1.7b; leave unset for instruct models.
+    llm_think: bool | None = None
     llm_timeout_s: float = Field(default=600.0, gt=0)
 
     # Ingestion
