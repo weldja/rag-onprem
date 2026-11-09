@@ -247,6 +247,9 @@ Milestone 4 (answer quality):
   previous question.
 - Summary mode: `mode: "summary"` + `document_ids` samples chunks evenly across the document.
 - Retrieval drops chunks whose text duplicates an already selected chunk.
+- Chunks are embedded as "document name - section" + text (`pipeline.embedding_text`); stored
+  text, keyword search and prompts use the plain text. Changing that input means re-indexing.
+  DOCX tables read each merged cell once. Summaries read a short document whole.
 - Optional reranker (`RERANKER_MODEL`, fastembed/ONNX, built into the image) is off by default; see
   `docs/eval-results.md` for why.
 

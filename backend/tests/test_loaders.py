@@ -70,6 +70,37 @@ def test_docx_groups_by_heading_and_keeps_tables_in_order(tmp_path: Path) -> Non
     )
 
 
+def test_docx_merged_cells_are_read_once(tmp_path: Path) -> None:
+    # The shape of a change-request form: a title merged across the row, and
+    # a value merged down two rows.
+    import docx
+
+    d = docx.Document()
+    table = d.add_table(rows=3, cols=4)
+    table.cell(0, 0).merge(table.cell(0, 3)).text = "Change Request Summary"
+    table.cell(1, 0).text = "Reason"
+    table.cell(1, 1).merge(table.cell(2, 3)).text = "Too many unhandled traps"
+    table.cell(2, 0).text = "Priority"
+    path = tmp_path / "form.docx"
+    d.save(str(path))
+
+    assert load_file(path, "docx").pages[0].page_content == (
+        "Change Request Summary\nReason | Too many unhandled traps\nPriority"
+    )
+
+
+def test_embedding_text_names_the_document_and_section() -> None:
+    from app.ingestion.pipeline import embedding_text
+
+    body = Document(page_content="Priority: 1, High", metadata={"section": "Summary"})
+    assert embedding_text("ETHACR245- EMS_trap assessment.docx", body) == (
+        "ETHACR245- EMS trap assessment - Summary\n\nPriority: 1, High"
+    )
+    starts = Document(page_content="Summary\nPriority", metadata={"section": "Summary"})
+    assert embedding_text("form.docx", starts) == "form\n\nSummary\nPriority"
+    assert embedding_text("a.pdf", Document(page_content="x", metadata={})) == "a\n\nx"
+
+
 # --------------------------------------------------------------- PPTX
 
 

@@ -42,6 +42,19 @@ def split(pieces: list[Document], settings: Settings) -> list[Document]:
     return [c for c in out if not is_toc_chunk(c.page_content, c.metadata.get("page"))]
 
 
+def embedding_text(filename: str, piece: Document) -> str:
+    """What gets embedded for a chunk: its text under the document's name (and
+    section heading, if any). A chunk deep in a form or manual rarely names the
+    document itself, so a question that does ("what priority was the EMS NBI
+    trap assessment change request given?") missed it. Only the vector sees
+    this; the stored chunk text, keyword search and the prompt are unchanged."""
+    title = Path(filename).stem.replace("_", " ").strip()
+    section = piece.metadata.get("section")
+    if section and not piece.page_content.startswith(section):
+        title = f"{title} - {section}"
+    return f"{title}\n\n{piece.page_content}"
+
+
 def ocr_options(settings: Settings) -> OcrOptions:
     return OcrOptions(
         enabled=settings.ocr_enabled,
@@ -196,7 +209,7 @@ def process_document(
     for batch in batched(pieces, settings.embed_batch):
         if progress is not None:
             progress(len(vectors), len(pieces))
-        vectors.extend(embedder.embed([p.page_content for p in batch]))
+        vectors.extend(embedder.embed([embedding_text(row.filename, p) for p in batch]))
     bad = {len(v) for v in vectors if len(v) != settings.embed_dim}
     if bad:
         raise IngestError(

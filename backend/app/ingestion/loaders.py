@@ -130,8 +130,19 @@ def load_docx(path: Path) -> LoadedDocument:
 
     for block in document.iter_inner_content():
         if isinstance(block, Table):
+            # python-docx returns a merged cell once per grid column it spans and
+            # again in each row it spans; keep its text only the first time. Forms
+            # otherwise repeat titles four or five times and push the fields that
+            # belong with them into another chunk.
+            seen: set[Any] = set()  # the cell elements themselves, kept alive
             for row in block.rows:
-                cells = [c.text.strip() for c in row.cells if c.text.strip()]
+                cells = []
+                for c in row.cells:
+                    if c._tc in seen:
+                        continue
+                    seen.add(c._tc)
+                    if c.text.strip():
+                        cells.append(c.text.strip())
                 if cells:
                     lines.append(" | ".join(cells))
             continue

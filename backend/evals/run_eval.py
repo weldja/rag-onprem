@@ -113,7 +113,9 @@ def setup(admin: httpx.Client, corpus_dir: Path) -> str:
         doc = resp.json()["document"]
         if group_id not in doc["group_ids"]:  # uploaded earlier with other sharing
             admin.put(f"/api/documents/{doc['id']}/groups", json={"group_ids": [group_id]})
-        if doc["stale"]:
+        # An unchanged file reuses the earlier index; re-index it so every run
+        # measures the current ingestion (loaders, chunking, embedding input).
+        if doc["stale"] or resp.json()["duplicate"]:
             admin.post(f"/api/documents/{doc['id']}/reindex")
         doc_ids.append(doc["id"])
 

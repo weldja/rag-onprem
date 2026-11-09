@@ -262,6 +262,12 @@ Don't skip this step: the new version may already have migrated the database.
 If a release changes the embedding model, documents need re-indexing. They're shown as
 "needs re-index" in **Documents**, and the release notes will say so.
 
+**Upgrading from 1.0.0-rc6 or earlier:** re-index once after the upgrade. On the **Indexing**
+page, select the **Indexed** group and choose **Re-index all**. Questions keep working
+meanwhile. Until a document is re-indexed it misses two improvements: each excerpt is now
+indexed with its document's name (a question naming a form or manual finds excerpts deep
+inside it), and merged table cells in Word documents are read once rather than repeated.
+
 ## 7. Troubleshooting
 
 | Symptom | Check |
