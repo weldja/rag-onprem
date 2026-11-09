@@ -116,7 +116,7 @@ def test_load_models_uses_the_same_options_as_requests() -> None:
         embed_num_gpu=0,
         transport=httpx.MockTransport(handler),
     ).load_models()
-    (embed_path, embed), (chat_path, chat) = seen
+    (chat_path, chat), (embed_path, embed) = seen  # LLM first, or Ollama unloads bge-m3
     assert embed_path == "/api/embed" and embed["options"] == {"num_gpu": 0}
     assert chat_path == "/api/chat" and chat["messages"] == []
     assert chat["options"] == {"temperature": 0.1, "num_ctx": 4096, "num_predict": 768}
