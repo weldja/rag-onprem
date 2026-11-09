@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { api, ApiError, type DocumentInfo, type Me } from "./api";
 import Account from "./pages/Account";
 import Admin from "./pages/Admin";
@@ -7,6 +7,7 @@ import Documents from "./pages/Documents";
 import Indexing from "./pages/Indexing";
 import Login from "./pages/Login";
 import Sidebar, { type Scope } from "./Sidebar";
+import SidebarResizer, { useSidebarWidth } from "./SidebarResizer";
 
 type Tab = "ask" | "documents" | "indexing" | "admin" | "account";
 
@@ -17,6 +18,7 @@ export default function App() {
   const [pending, setPending] = useState<PendingAsk | null>(null);
   const [scope, setScope] = useState<Scope | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false); // narrow screens only
+  const [sidebarWidth, setSidebarWidth] = useSidebarWidth(); // wide screens
 
   useEffect(() => {
     api
@@ -93,7 +95,12 @@ export default function App() {
         </span>
       </header>
       {/* The Ask view stays mounted so the conversation survives tab switches. */}
-      <div className={sidebarOpen ? "ask-layout sidebar-open" : "ask-layout"} hidden={tab !== "ask"}>
+      <div
+        className={sidebarOpen ? "ask-layout sidebar-open" : "ask-layout"}
+        hidden={tab !== "ask"}
+        style={{ "--sidebar-w": `${sidebarWidth}px` } as CSSProperties}
+      >
+        <SidebarResizer width={sidebarWidth} onResize={setSidebarWidth} />
         <div id="sources-sidebar" className="sidebar-wrap">
           <Sidebar
             me={me}

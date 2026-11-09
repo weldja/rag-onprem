@@ -149,7 +149,10 @@ limit, or excluded by `SHARE_n_EXCLUDE`).
   the queue ("Remove from queue"); excluding the file being indexed stops the worker at the
   next excerpt ("Stop & exclude").
 - **Include** puts an excluded file back in the queue.
-- Tick several files (or the header box for everything listed) to act on them at once.
+- Files are grouped by status (untick **Group by status** for one list). Each group's header
+  has buttons that act on the whole group as filtered, for example **Remove all from queue**
+  or **Re-index all**, and a box to select the group. Tick individual files, or the header box
+  for everything listed, to act on a selection.
 
 Excluding a file here is per file and reversible. To keep a whole folder out, use
 `SHARE_n_EXCLUDE` instead (see *File shares*).

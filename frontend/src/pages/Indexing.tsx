@@ -83,6 +83,14 @@ function actionLabel(a: IndexAction, d?: DocumentInfo): string {
   return "Exclude";
 }
 
+function groupActionLabel(a: IndexAction, group: string): string {
+  if (a === "reindex") return "Re-index all";
+  if (a === "include") return "Include all";
+  if (group === "pending") return "Remove all from queue";
+  if (group === "processing") return "Stop & exclude";
+  return "Exclude all";
+}
+
 function StatusCell({ row }: { row: Row }) {
   if (row.kind === "skip") {
     return (
@@ -140,7 +148,23 @@ export default function Indexing() {
   const [status, setStatus] = useState<StatusFilter>("all");
   const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: "status", desc: false });
   const [selected, setSelected] = useState<Set<number>>(new Set());
-  const [limit, setLimit] = useState(PAGE);
+  const [limits, setLimits] = useState<Record<string, number>>({}); // rows shown per group
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [grouped, setGroupedState] = useState(() => {
+    try {
+      return localStorage.getItem("indexingGrouped") !== "0";
+    } catch {
+      return true;
+    }
+  });
+  const setGrouped = (on: boolean) => {
+    setGroupedState(on);
+    try {
+      localStorage.setItem("indexingGrouped", on ? "1" : "0");
+    } catch {
+      /* not remembered */
+    }
+  };
 
   const refreshDocs = useCallback(
     () =>
@@ -276,21 +300,26 @@ export default function Indexing() {
     setWorking(true);
     setError("");
     setMessage("");
+    const verb = { reindex: "queued for re-indexing", exclude: "excluded", include: "queued for indexing" }[action];
+    let changed = 0;
+    const left: string[] = [];
     try {
-      const res = await api.indexAction(
-        action,
-        eligible.map((d) => d.id),
-      );
-      const verb = { reindex: "queued for re-indexing", exclude: "excluded", include: "queued for indexing" }[
-        action
-      ];
-      let note = `${res.changed.length} file${res.changed.length === 1 ? "" : "s"} ${verb}.`;
-      if (res.skipped.length) note += ` ${res.skipped.length} left unchanged (${res.skipped[0].reason}).`;
-      setMessage(note);
+      // The API takes up to 5,000 documents per request.
+      for (let i = 0; i < eligible.length; i += 5000) {
+        const res = await api.indexAction(
+          action,
+          eligible.slice(i, i + 5000).map((d) => d.id),
+        );
+        changed += res.changed.length;
+        left.push(...res.skipped.map((s) => s.reason));
+      }
       setSelected(new Set());
     } catch (e) {
       setError(e instanceof Error ? e.message : "Request failed");
     }
+    let note = `${changed.toLocaleString()} file${changed === 1 ? "" : "s"} ${verb}.`;
+    if (left.length) note += ` ${left.length} left unchanged (${left[0]}).`;
+    setMessage(note);
     setWorking(false);
     void refreshDocs();
   };
@@ -309,6 +338,65 @@ export default function Indexing() {
 
   const bulk: IndexAction[] = ["reindex", "exclude", "include"];
   const totalExcerpts = docs.reduce((n, d) => n + (d.status === "ready" ? d.chunks : 0), 0);
+
+  const groups: { key: string; label: string; rows: Row[] }[] = grouped
+    ? STATUS_ORDER.map((s) => ({
+        key: s,
+        label: STATUS_LABEL[s],
+        rows: visible.filter((r) => rowStatus(r) === s),
+      })).filter((g) => g.rows.length > 0)
+    : [{ key: "all", label: "", rows: visible }];
+
+  const renderRow = (r: Row) => {
+    const slash = r.path.lastIndexOf("/", r.path.length - 2);
+    const folder = slash >= 0 ? r.path.slice(0, slash) : "";
+    const name = slash >= 0 ? r.path.slice(slash + 1) : r.path;
+    const d = r.kind === "doc" ? r.doc : null;
+    return (
+      <tr key={r.key} className={r.kind === "skip" || d?.status === "excluded" ? "muted" : undefined}>
+        <td className="sel">
+          {d?.can_manage && (
+            <input
+              type="checkbox"
+              aria-label={`Select ${name}`}
+              checked={selected.has(d.id)}
+              onChange={(e) => toggle(d.id, e.target.checked)}
+            />
+          )}
+        </td>
+        <td className="file">
+          {d ? (
+            <a href={api.fileUrl(d.id)} target="_blank" rel="noreferrer">
+              {name}
+            </a>
+          ) : (
+            <span>{name}</span>
+          )}
+          {folder && <div className="meta small">{folder}</div>}
+        </td>
+        <td className="meta">{r.source === null ? "Uploaded" : (sourceName.get(r.source) ?? "")}</td>
+        <td>
+          <StatusCell row={r} />
+        </td>
+        <td className="num">{d && d.status === "ready" ? d.chunks.toLocaleString() : ""}</td>
+        <td className="num meta">{size(d ? d.size_bytes : r.kind === "skip" ? r.file.size_bytes : null)}</td>
+        <td className="meta">{d ? when(d.indexed_at) : ""}</td>
+        <td className="actions">
+          {d &&
+            actionsFor(d).map((a) => (
+              <button
+                key={a}
+                className={a === "exclude" ? "link danger" : "link"}
+                disabled={working}
+                onClick={() => run(a, [d])}
+              >
+                {actionLabel(a, d)}
+              </button>
+            ))}
+        </td>
+      </tr>
+    );
+  };
 
   return (
     <section className="page wide indexing">
@@ -343,7 +431,7 @@ export default function Indexing() {
           value={q}
           onChange={(e) => {
             setQ(e.target.value);
-            setLimit(PAGE);
+            setLimits({});
           }}
           aria-label="Filter by name or folder"
         />
@@ -351,7 +439,7 @@ export default function Indexing() {
           value={source}
           onChange={(e) => {
             setSource(e.target.value);
-            setLimit(PAGE);
+            setLimits({});
           }}
           aria-label="Source"
         >
@@ -364,6 +452,10 @@ export default function Indexing() {
           ))}
           <option value="uploads">Uploaded</option>
         </select>
+        <label className="check">
+          <input type="checkbox" checked={grouped} onChange={(e) => setGrouped(e.target.checked)} />
+          Group by status
+        </label>
         {sources.map((s) =>
           source === String(s.id) ? (
             <span key={s.id} className="meta small">
@@ -437,74 +529,95 @@ export default function Indexing() {
               <th aria-label="Actions" />
             </tr>
           </thead>
-          <tbody>
-            {loaded && visible.length === 0 && (
+          {loaded && visible.length === 0 && (
+            <tbody>
               <tr>
                 <td colSpan={8} className="meta">
                   No files match.
                 </td>
               </tr>
-            )}
-            {visible.slice(0, limit).map((r) => {
-              const slash = r.path.lastIndexOf("/", r.path.length - 2);
-              const folder = slash >= 0 ? r.path.slice(0, slash) : "";
-              const name = slash >= 0 ? r.path.slice(slash + 1) : r.path;
-              const d = r.kind === "doc" ? r.doc : null;
-              return (
-                <tr key={r.key} className={r.kind === "skip" || d?.status === "excluded" ? "muted" : undefined}>
-                  <td className="sel">
-                    {d?.can_manage && (
-                      <input
-                        type="checkbox"
-                        aria-label={`Select ${name}`}
-                        checked={selected.has(d.id)}
-                        onChange={(e) => toggle(d.id, e.target.checked)}
-                      />
-                    )}
-                  </td>
-                  <td className="file">
-                    {d ? (
-                      <a href={api.fileUrl(d.id)} target="_blank" rel="noreferrer">
-                        {name}
-                      </a>
-                    ) : (
-                      <span>{name}</span>
-                    )}
-                    {folder && <div className="meta small">{folder}</div>}
-                  </td>
-                  <td className="meta">{r.source === null ? "Uploaded" : (sourceName.get(r.source) ?? "")}</td>
-                  <td>
-                    <StatusCell row={r} />
-                  </td>
-                  <td className="num">{d && d.status === "ready" ? d.chunks.toLocaleString() : ""}</td>
-                  <td className="num meta">{size(d ? d.size_bytes : r.kind === "skip" ? r.file.size_bytes : null)}</td>
-                  <td className="meta">{d ? when(d.indexed_at) : ""}</td>
-                  <td className="actions">
-                    {d &&
-                      actionsFor(d).map((a) => (
+            </tbody>
+          )}
+          {groups.map((g) => {
+            const shown = limits[g.key] ?? PAGE;
+            const open = !collapsed.has(g.key);
+            const groupDocs = g.rows.flatMap((r) => (r.kind === "doc" && r.doc.can_manage ? [r.doc] : []));
+            const groupSelected = groupDocs.length > 0 && groupDocs.every((d) => selected.has(d.id));
+            return (
+              <tbody key={g.key}>
+                {grouped && (
+                  <tr className="group-row">
+                    <td className="sel">
+                      {groupDocs.length > 0 && (
+                        <input
+                          type="checkbox"
+                          aria-label={`Select all ${g.rows.length} ${g.label} files`}
+                          checked={groupSelected}
+                          onChange={(e) => {
+                            const next = new Set(selected);
+                            for (const d of groupDocs) {
+                              if (e.target.checked) next.add(d.id);
+                              else next.delete(d.id);
+                            }
+                            setSelected(next);
+                          }}
+                        />
+                      )}
+                    </td>
+                    <td colSpan={7}>
+                      <div className="group-head">
                         <button
-                          key={a}
-                          className={a === "exclude" ? "link danger" : "link"}
-                          disabled={working}
-                          onClick={() => run(a, [d])}
+                          className="link group-toggle"
+                          aria-expanded={open}
+                          onClick={() => {
+                            const next = new Set(collapsed);
+                            if (open) next.add(g.key);
+                            else next.delete(g.key);
+                            setCollapsed(next);
+                          }}
                         >
-                          {actionLabel(a, d)}
+                          <span aria-hidden>{open ? "▾" : "▸"}</span> {g.label}
+                          <span className="count">{g.rows.length.toLocaleString()}</span>
                         </button>
-                      ))}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
+                        {bulk.map((a) => {
+                          const n = groupDocs.filter((d) => actionsFor(d).includes(a)).length;
+                          return n ? (
+                            <button
+                              key={a}
+                              className={a === "exclude" ? "small-btn danger" : "small-btn"}
+                              disabled={working}
+                              onClick={() => run(a, groupDocs)}
+                            >
+                              {groupActionLabel(a, g.key)} ({n.toLocaleString()})
+                            </button>
+                          ) : null;
+                        })}
+                        {g.key === "skipped" && (
+                          <span className="meta small">
+                            Not in the index, so there's nothing to remove. To index them, convert them to a
+                            supported type; to hide an excluded folder, change SHARE_n_EXCLUDE.
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                )}
+                {open && g.rows.slice(0, shown).map(renderRow)}
+                {open && g.rows.length > shown && (
+                  <tr>
+                    <td />
+                    <td colSpan={7}>
+                      <button onClick={() => setLimits({ ...limits, [g.key]: shown + PAGE })}>
+                        Show more ({(g.rows.length - shown).toLocaleString()} not shown)
+                      </button>
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            );
+          })}
         </table>
       </div>
-      {visible.length > limit && (
-        <p>
-          <button onClick={() => setLimit(limit + PAGE)}>
-            Show more ({(visible.length - limit).toLocaleString()} not shown)
-          </button>
-        </p>
-      )}
     </section>
   );
 }
