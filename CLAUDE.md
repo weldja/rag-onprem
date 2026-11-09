@@ -124,6 +124,9 @@ Apply these whenever you add the matching component:
   or Ollama swaps the LLM out on every question. `install.sh` sets it on cards under 6 GB, along
   with `LLM_NUM_CTX=4096`, `LLM_MAX_TOKENS=768` and `OLLAMA_KV_CACHE_TYPE=q8_0`. Check placement
   with `ollama ps` and timings with the api's "answer timing" log line.
+- The api loads both models at start-up (`OllamaClient.load_models`, LLM first or Ollama unloads
+  bge-m3), and llama-server's host prompt cache is off (`LLAMA_ARG_CACHE_RAM=0`): saving it cost
+  0.1–5 s per question on the laptop.
 
 ## Models
 
