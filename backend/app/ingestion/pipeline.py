@@ -9,6 +9,7 @@ import logging
 from collections.abc import Callable
 from itertools import batched
 from pathlib import Path
+from typing import Any
 
 from sqlalchemy import Engine, delete, func, insert, select, text, update
 
@@ -24,6 +25,10 @@ log = logging.getLogger(__name__)
 
 class IngestError(RuntimeError):
     """Permanent failure for this document (bad file, no text, wrong dimension)."""
+
+
+class IndexCancelled(RuntimeError):
+    """The document was excluded or deleted while it was being indexed."""
 
 
 def split(pieces: list[Document], settings: Settings) -> list[Document]:
@@ -49,12 +54,45 @@ def ocr_options(settings: Settings) -> OcrOptions:
 
 
 def set_status(engine: Engine, doc_id: int, status: str, error: str | None = None) -> None:
+    """Never overrides an administrator's exclusion."""
     with engine.begin() as conn:
         conn.execute(
             update(documents)
-            .where(documents.c.id == doc_id)
-            .values(status=status, error=error, updated_at=func.now())
+            .where(documents.c.id == doc_id, documents.c.status != "excluded")
+            .values(
+                status=status,
+                error=error,
+                progress_done=None,
+                progress_total=None,
+                updated_at=func.now(),
+            )
         )
+
+
+def _lock_still_processing(conn: Any, doc_id: int) -> None:
+    """Inside the transaction that writes the result: stop if the document was
+    excluded or deleted meanwhile (the row lock orders us after that change)."""
+    status = conn.execute(
+        select(documents.c.status).where(documents.c.id == doc_id).with_for_update()
+    ).scalar_one_or_none()
+    if status != "processing":
+        raise IndexCancelled(doc_id)
+
+
+def _mark_ready(conn: Any, doc_id: int, page_count: int | None) -> None:
+    conn.execute(
+        update(documents)
+        .where(documents.c.id == doc_id)
+        .values(
+            status="ready",
+            error=None,
+            page_count=page_count,
+            progress_done=None,
+            progress_total=None,
+            indexed_at=func.now(),
+            updated_at=func.now(),
+        )
+    )
 
 
 def copy_from_duplicate(engine: Engine, doc_id: int, sha256: str, embed_model: str) -> int | None:
@@ -78,6 +116,7 @@ def copy_from_duplicate(engine: Engine, doc_id: int, sha256: str, embed_model: s
         ).one_or_none()
         if donor is None:
             return None
+        _lock_still_processing(conn, doc_id)
         conn.execute(delete(chunks).where(chunks.c.document_id == doc_id))
         copied = conn.execute(
             text(
@@ -90,11 +129,7 @@ def copy_from_duplicate(engine: Engine, doc_id: int, sha256: str, embed_model: s
             ),
             {"doc": doc_id, "donor": donor.id},
         ).rowcount
-        conn.execute(
-            update(documents)
-            .where(documents.c.id == doc_id)
-            .values(status="ready", error=None, page_count=donor.page_count, updated_at=func.now())
-        )
+        _mark_ready(conn, doc_id, donor.page_count)
     return int(copied)
 
 
@@ -104,24 +139,29 @@ def process_document(
     *,
     embedder: Embedder,
     settings: Settings,
-    before_embed: Callable[[], object] | None = None,
+    progress: Callable[[int, int], object] | None = None,
 ) -> int:
     """Index (or re-index) a document. Returns the number of chunks written.
-    Raises IngestError for permanent problems; model errors propagate so the
-    caller can retry. `before_embed` runs before each embedding request (the
-    worker uses it to let questions go first)."""
-    with engine.connect() as conn:
+    Raises IngestError for permanent problems and IndexCancelled if the document
+    is excluded or deleted (before or during indexing); model errors propagate
+    so the caller can retry. `progress(done, total)` runs before each embedding
+    request: the worker reports progress there, lets questions go first, and
+    raises IndexCancelled to stop."""
+    with engine.begin() as conn:
         row = conn.execute(
-            select(
+            update(documents)
+            .where(documents.c.id == doc_id, documents.c.status != "excluded")
+            .values(status="processing", progress_done=None, progress_total=None)
+            .returning(
                 documents.c.filename,
                 documents.c.storage_path,
                 documents.c.content_type,
                 documents.c.sha256,
                 documents.c.source_id,
-            ).where(documents.c.id == doc_id)
+            )
         ).one_or_none()
     if row is None:
-        raise IngestError(f"Document {doc_id} no longer exists")
+        raise IndexCancelled(doc_id)
     if not row.storage_path or not Path(row.storage_path).is_file():
         if row.source_id is not None:
             raise IngestError(f"{row.filename} is no longer on the share (or can't be read)")
@@ -132,7 +172,6 @@ def process_document(
         log.info("Document %d: copied %d chunks from an identical document", doc_id, copied)
         return copied
 
-    set_status(engine, doc_id, "processing")
     try:
         loaded = load_file(
             Path(row.storage_path),
@@ -155,8 +194,8 @@ def process_document(
 
     vectors: list[list[float]] = []
     for batch in batched(pieces, settings.embed_batch):
-        if before_embed is not None:
-            before_embed()
+        if progress is not None:
+            progress(len(vectors), len(pieces))
         vectors.extend(embedder.embed([p.page_content for p in batch]))
     bad = {len(v) for v in vectors if len(v) != settings.embed_dim}
     if bad:
@@ -166,6 +205,7 @@ def process_document(
         )
 
     with engine.begin() as conn:
+        _lock_still_processing(conn, doc_id)
         conn.execute(delete(chunks).where(chunks.c.document_id == doc_id))
         conn.execute(
             insert(chunks),
@@ -182,10 +222,6 @@ def process_document(
                 for ordinal, (piece, vector) in enumerate(zip(pieces, vectors, strict=True))
             ],
         )
-        conn.execute(
-            update(documents)
-            .where(documents.c.id == doc_id)
-            .values(status="ready", error=None, page_count=loaded.page_count, updated_at=func.now())
-        )
+        _mark_ready(conn, doc_id, loaded.page_count)
     log.info("Indexed document %d: %d chunks", doc_id, len(pieces))
     return len(pieces)

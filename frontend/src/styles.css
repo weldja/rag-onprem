@@ -859,3 +859,130 @@ label.check {
     visibility: visible;
   }
 }
+
+/* ----------------------------------------------------------- indexing */
+
+main.wide {
+  max-width: 1400px;
+}
+
+.badge.excluded,
+.badge.skipped {
+  color: var(--muted);
+}
+
+.dot.excluded {
+  background: var(--border);
+}
+
+.status-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 12px 0;
+}
+
+.chip {
+  border-radius: 999px;
+  padding: 3px 12px;
+}
+
+.chip .count {
+  color: var(--muted);
+  margin-left: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.chip.active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.chip.processing .count,
+.chip.pending .count {
+  color: var(--warn);
+}
+
+.chip.failed .count {
+  color: var(--danger);
+}
+
+.chip.ready .count {
+  color: var(--ok);
+}
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.filters input[type="search"] {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+
+select {
+  font: inherit;
+  color: inherit;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+.bulk {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  margin-bottom: 8px;
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+.indexing .table td.sel,
+.indexing .table th.sel {
+  width: 32px;
+  padding-right: 0;
+}
+
+.indexing .table td.file {
+  word-break: break-word;
+  min-width: 220px;
+}
+
+.indexing .table td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.indexing .table tr.muted td {
+  color: var(--muted);
+}
+
+.th-sort {
+  font-weight: 600;
+  color: var(--muted);
+  padding: 0;
+}
+
+.progress {
+  display: grid;
+  gap: 2px;
+  margin-top: 4px;
+}
+
+.progress progress {
+  width: 160px;
+  max-width: 100%;
+  height: 8px;
+  accent-color: var(--warn);
+}

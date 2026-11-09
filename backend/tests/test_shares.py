@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from app.core.config import Settings
-from app.ingestion.shares import excluded, skip_dir, skip_name, walk
+from app.ingestion.shares import excluded, not_indexable, skip_dir, skip_name, walk
 
 
 def test_lock_temp_and_system_files_are_skipped() -> None:
@@ -43,9 +43,17 @@ def test_walk_finds_supported_files_and_counts_the_rest(tmp_path: Path) -> None:
     (tmp_path / "Policies" / "empty.txt").write_bytes(b"")  # empty
     (tmp_path / "Policies" / "big.txt").write_bytes(b"x" * 2000)  # over the limit
     (tmp_path / ".git" / "notes.md").write_bytes(b"x")
-    found, skipped, errors = walk(tmp_path, ["Policies/HR"], max_bytes=1000)
+    (tmp_path / "Policies" / "draft.docx").write_bytes(b"x")
+    found, skipped, errors = walk(tmp_path, ["Policies/HR", "*/draft.docx"], max_bytes=1000)
     assert sorted(found) == ["Policies/leave.pdf"]
-    assert skipped == 3
+    assert sorted((s.path, s.reason) for s in skipped) == [
+        ("Policies/HR/", "excluded"),
+        ("Policies/big.txt", "too_large"),
+        ("Policies/draft.docx", "excluded"),
+        ("Policies/empty.txt", "empty"),
+        ("Policies/tool.exe", "unsupported"),
+    ]
+    assert not_indexable(skipped) == 3
     assert errors == []
 
 

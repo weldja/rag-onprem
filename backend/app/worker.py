@@ -16,7 +16,7 @@ from app.core.config import Settings, get_settings
 from app.db import priority
 from app.db.engine import get_engine
 from app.ingestion import registry, shares
-from app.ingestion.pipeline import IngestError, process_document, set_status
+from app.ingestion.pipeline import IndexCancelled, IngestError, process_document, set_status
 from app.llm.base import Embedder
 from app.llm.ollama import OllamaClient, OllamaError
 
@@ -30,14 +30,21 @@ def run_once(engine: Engine, embedder: Embedder, settings: Settings) -> bool:
     if job is None:
         return False
     log.info("Job %d: %s document %d (attempt %d)", job.id, job.kind, job.document_id, job.attempts)
+
+    def progress(done: int, total: int) -> None:
+        # Questions first (app/db/priority.py), then report progress; the update
+        # finds no row if an administrator excluded or deleted the document.
+        priority.wait_while_answering(engine, settings.index_pause_max_s)
+        if not registry.report_progress(engine, job.document_id, done, total):
+            raise IndexCancelled(job.document_id)
+
     try:
         process_document(
-            engine,
-            job.document_id,
-            embedder=embedder,
-            settings=settings,
-            before_embed=lambda: priority.wait_while_answering(engine, settings.index_pause_max_s),
+            engine, job.document_id, embedder=embedder, settings=settings, progress=progress
         )
+    except IndexCancelled:
+        log.info("Job %d: document %d was excluded or deleted; stopped", job.id, job.document_id)
+        registry.finish_job(engine, job.id, cancelled=True)
     except IngestError as exc:
         log.warning("Job %d failed permanently: %s", job.id, exc)
         set_status(engine, job.document_id, "failed", str(exc))

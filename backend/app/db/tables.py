@@ -33,7 +33,8 @@ documents = Table(
     Column("filename", Text, nullable=False),
     Column("sha256", String(64), nullable=False),
     Column("page_count", Integer, nullable=True),
-    # pending -> processing -> ready | failed
+    # pending -> processing -> ready | failed; excluded (by an admin: no chunks,
+    # never queued, kept so a share scan doesn't add it again)
     Column("status", Text, nullable=False, server_default="pending"),
     Column("error", Text, nullable=True),
     Column("content_type", Text, nullable=True),  # file extension without the dot
@@ -49,9 +50,14 @@ documents = Table(
     Column("source_id", BigInteger, ForeignKey("sources.id", ondelete="CASCADE"), nullable=True),
     Column("source_path", Text, nullable=True),  # POSIX path relative to the share root
     Column("source_mtime", Float, nullable=True),
+    # Migration 0006: excerpts embedded so far while processing; last time ready.
+    Column("progress_done", Integer, nullable=True),
+    Column("progress_total", Integer, nullable=True),
+    Column("indexed_at", DateTime(timezone=True), nullable=True),
     UniqueConstraint("source_id", "source_path", name="uq_documents_source_path"),
     CheckConstraint(
-        "status IN ('pending','processing','ready','failed')", name="ck_documents_status"
+        "status IN ('pending','processing','ready','failed','excluded')",
+        name="ck_documents_status",
     ),
 )
 
@@ -71,6 +77,16 @@ sources = Table(
     Column("files_skipped", Integer, nullable=False, server_default="0"),
     Column("created_at", DateTime(timezone=True), server_default=func.now(), nullable=False),
     UniqueConstraint("key", name="uq_sources_key"),
+)
+
+# Files on a share that aren't indexed, replaced on every scan (migration 0006).
+source_skipped = Table(
+    "source_skipped",
+    metadata,
+    Column("source_id", BigInteger, ForeignKey("sources.id", ondelete="CASCADE"), primary_key=True),
+    Column("path", Text, primary_key=True),
+    Column("reason", Text, nullable=False),  # unsupported | empty | too_large | excluded
+    Column("size_bytes", BigInteger, nullable=True),
 )
 
 chunks = Table(
@@ -161,7 +177,8 @@ ingest_jobs = Table(
         index=True,
     ),
     Column("kind", Text, nullable=False, server_default="ingest"),  # ingest | reindex
-    Column("status", Text, nullable=False, server_default="queued"),  # queued|running|done|failed
+    # queued | running | done | failed | cancelled (document excluded, migration 0006)
+    Column("status", Text, nullable=False, server_default="queued"),
     Column("attempts", Integer, nullable=False, server_default="0"),
     Column("error", Text, nullable=True),
     Column("created_at", DateTime(timezone=True), server_default=func.now(), nullable=False),

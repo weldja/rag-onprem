@@ -48,6 +48,10 @@ class DocumentOut(BaseModel):
     updated_at: datetime
     source_id: int | None = None
     source_path: str | None = None
+    progress_done: int | None = None
+    progress_total: int | None = None
+    indexed_at: datetime | None = None
+    queue_position: int | None = None
 
 
 class UploadOut(BaseModel):

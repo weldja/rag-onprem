@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from app.api.auth import router as auth_router
 from app.api.deps import get_directory, get_ollama, get_reranker
 from app.api.documents import router as documents_router
+from app.api.indexing import router as indexing_router
 from app.api.routes import router
 from app.api.sources import router as sources_router
 from app.auth.sessions import purge_expired
@@ -102,6 +103,7 @@ def create_app() -> FastAPI:
     app.include_router(auth_router)
     app.include_router(documents_router)
     app.include_router(sources_router)
+    app.include_router(indexing_router)
     return app
 
 

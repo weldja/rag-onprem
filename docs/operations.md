@@ -134,6 +134,26 @@ How it behaves:
   excerpts). Questions can be asked meanwhile: indexing pauses while an answer is being written
   (for at most `INDEX_PAUSE_MAX_S`, default 120 s, per excerpt), so it doesn't slow answers down.
 
+### Indexing page (administrators)
+
+The **Indexing** tab lists every file the assistant knows about: uploads, files on the shares, and
+share files it doesn't index (with the reason: file type not supported, empty, over the size
+limit, or excluded by `SHARE_n_EXCLUDE`).
+
+- **Filter** by status (Indexing, Queued, Failed, Indexed, Excluded, Not indexed), by source, and
+  by name or folder. Files being indexed show progress in excerpts; queued files their place in
+  the queue.
+- **Re-index** an indexed or failed file.
+- **Exclude** removes a file from the index and keeps it out: it isn't searched, and the share
+  scan doesn't queue it again, even when the file changes. Excluding a queued file takes it off
+  the queue ("Remove from queue"); excluding the file being indexed stops the worker at the
+  next excerpt ("Stop & exclude").
+- **Include** puts an excluded file back in the queue.
+- Tick several files (or the header box for everything listed) to act on them at once.
+
+Excluding a file here is per file and reversible. To keep a whole folder out, use
+`SHARE_n_EXCLUDE` instead (see *File shares*).
+
 ### Directory sign-in (Active Directory / LDAP)
 
 Staff can sign in with their company account instead of a separate password. Set the `LDAP_*`

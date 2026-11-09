@@ -31,7 +31,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 
 from app.core.config import Settings, ShareConfig
-from app.db.tables import documents, groups, ingest_jobs, sources
+from app.db.tables import documents, groups, ingest_jobs, source_skipped, sources
 from app.ingestion.loaders import SUPPORTED_EXTENSIONS
 
 log = logging.getLogger(__name__)
@@ -39,6 +39,7 @@ log = logging.getLogger(__name__)
 # Only one worker scans at a time (several worker replicas are allowed).
 _SCAN_LOCK_ID = 0x5241_4753  # "RAGS"
 _HASH_CHUNK = 1024 * 1024
+_MAX_SKIPPED_LISTED = 10_000
 
 _SKIP_DIRS = {"$recycle.bin", "#recycle", "@eadir", "system volume information", "__macosx"}
 _SKIP_FILES = {"thumbs.db", "desktop.ini", ".ds_store"}
@@ -162,13 +163,21 @@ def _apply_groups(conn: Any, source_id: int, group_ids: list[int]) -> None:
 # ----------------------------------------------------------------- scanning
 
 
+@dataclass(frozen=True)
+class Skipped:
+    path: str  # relative POSIX path; a folder for "excluded" folders
+    reason: str  # unsupported | empty | too_large | excluded
+    size_bytes: int | None = None
+
+
 def walk(
     root: Path, exclude: list[str], max_bytes: int
-) -> tuple[dict[str, os.stat_result], int, list[str]]:
-    """Supported files under root as {relative posix path: stat}, the number of
-    files skipped, and the errors met while walking."""
+) -> tuple[dict[str, os.stat_result], list[Skipped], list[str]]:
+    """Supported files under root as {relative posix path: stat}, the files
+    (and excluded folders) not indexed with the reason, and the errors met
+    while walking. Hidden, temporary and system files aren't listed at all."""
     found: dict[str, os.stat_result] = {}
-    skipped = 0
+    skipped: list[Skipped] = []
     errors: list[str] = []
 
     def on_error(exc: OSError) -> None:
@@ -176,31 +185,44 @@ def walk(
 
     for dirpath, dirnames, filenames in os.walk(root, onerror=on_error, followlinks=False):
         here = Path(dirpath)
-        dirnames[:] = sorted(
-            d
-            for d in dirnames
-            if not skip_dir(d) and not excluded((here / d).relative_to(root).as_posix(), exclude)
-        )
-        for name in filenames:
+        keep = []
+        for d in sorted(dirnames):
+            if skip_dir(d):
+                continue
+            rel_dir = (here / d).relative_to(root).as_posix()
+            if excluded(rel_dir, exclude):
+                skipped.append(Skipped(rel_dir + "/", "excluded"))
+            else:
+                keep.append(d)
+        dirnames[:] = keep
+        for name in sorted(filenames):
             if skip_name(name):
                 continue
             path = here / name
             rel = path.relative_to(root).as_posix()
             if excluded(rel, exclude):
-                continue
-            if path.suffix.lower().lstrip(".") not in SUPPORTED_EXTENSIONS:
-                skipped += 1
+                skipped.append(Skipped(rel, "excluded"))
                 continue
             try:
                 st = path.stat()
             except OSError as exc:
                 on_error(exc)
                 continue
-            if st.st_size == 0 or st.st_size > max_bytes:
-                skipped += 1
-                continue
-            found[rel] = st
+            if path.suffix.lower().lstrip(".") not in SUPPORTED_EXTENSIONS:
+                skipped.append(Skipped(rel, "unsupported", st.st_size))
+            elif st.st_size == 0:
+                skipped.append(Skipped(rel, "empty", 0))
+            elif st.st_size > max_bytes:
+                skipped.append(Skipped(rel, "too_large", st.st_size))
+            else:
+                found[rel] = st
     return found, skipped, errors
+
+
+def not_indexable(skipped: list[Skipped]) -> int:
+    """Files skipped for their type or size (the sidebar's "skipped" count);
+    files excluded by configuration aren't counted."""
+    return sum(1 for s in skipped if s.reason != "excluded")
 
 
 def scan_source(
@@ -229,7 +251,9 @@ def scan_source(
     if not root.is_dir():
         result.error = "The share isn't mounted (folder not found). Check SHARE_PATH in .env."
         return result
-    found, result.skipped, errors = walk(root, share.exclude, max_bytes)
+    found, skipped, errors = walk(root, share.exclude, max_bytes)
+    result.skipped = not_indexable(skipped)
+    _record_skipped(engine, source.id, skipped)
     if not found and existing:
         result.error = (
             "The share looks empty, so nothing was removed. If it is unmounted or "
@@ -280,13 +304,17 @@ def scan_source(
                     )
                 conn.execute(insert(ingest_jobs).values(document_id=doc_id, kind="ingest"))
                 result.added += 1
-            elif old.sha256 == sha:
+            elif old.sha256 == sha or old.status == "excluded":
+                # Excluded by an administrator: track the file, never queue it.
                 conn.execute(
                     update(documents)
                     .where(documents.c.id == old.id)
-                    .values(source_mtime=st.st_mtime, size_bytes=st.st_size)
+                    .values(source_mtime=st.st_mtime, size_bytes=st.st_size, sha256=sha)
                 )
-                result.unchanged += 1
+                if old.sha256 == sha:
+                    result.unchanged += 1
+                else:
+                    result.changed += 1
             else:
                 conn.execute(
                     update(documents)
@@ -322,6 +350,19 @@ def scan_source(
     if errors:
         result.error = f"{len(errors)} file(s) or folder(s) couldn't be read, e.g. {errors[0]}"
     return result
+
+
+def _record_skipped(engine: Engine, source_id: int, skipped: list[Skipped]) -> None:
+    """Replace the share's list of files that aren't indexed (capped, so a huge
+    archive folder can't bloat the table; the count stays exact)."""
+    rows = [
+        {"source_id": source_id, "path": s.path, "reason": s.reason, "size_bytes": s.size_bytes}
+        for s in skipped[:_MAX_SKIPPED_LISTED]
+    ]
+    with engine.begin() as conn:
+        conn.execute(delete(source_skipped).where(source_skipped.c.source_id == source_id))
+        if rows:
+            conn.execute(insert(source_skipped), rows)
 
 
 def _record(engine: Engine, source_id: int, result: ScanResult, files_seen: int) -> None:

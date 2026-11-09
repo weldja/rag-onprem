@@ -304,6 +304,13 @@ File shares, sidebar and responsiveness:
   (`excerpts`, `documents`, `cached`), an elapsed timer, and "Answered in N s".
 - Answer cache (`app/retrieval/cache.py`, in api memory): keyed on model settings plus the exact
   messages, so it's ACL-safe and never stale; `debug` requests (the eval) bypass it.
+- Indexing page (admins, `frontend/src/pages/Indexing.tsx`, `app/api/indexing.py`): migration
+  0006 adds document status `excluded` (no chunks, never queued; share scans keep it excluded),
+  job status `cancelled`, `progress_done/total`, `indexed_at`, and `source_skipped` (share files
+  not indexed, with reason, replaced each scan). `registry.apply_action` does
+  reindex/exclude/include in one transaction. The worker's per-excerpt `progress` callback
+  reports progress and raises `IndexCancelled` when the document is no longer `processing`;
+  the final write re-checks under a row lock, so an exclusion always wins.
 - Questions go before indexing (`app/db/priority.py`): the api holds a shared advisory lock
   while answering; the worker checks it before each embedding request (`EMBED_BATCH=1`) and
   waits. Without it, a question's embedding queued behind indexing in Ollama (71 s measured).

@@ -59,7 +59,7 @@ export interface Group extends GroupRef {
 export interface DocumentInfo {
   id: number;
   filename: string;
-  status: "pending" | "processing" | "ready" | "failed";
+  status: "pending" | "processing" | "ready" | "failed" | "excluded";
   error: string | null;
   content_type: string | null;
   size_bytes: number | null;
@@ -73,6 +73,25 @@ export interface DocumentInfo {
   updated_at: string;
   source_id: number | null; // file share; null for uploads
   source_path: string | null; // path within the share
+  progress_done: number | null; // excerpts embedded so far, while processing
+  progress_total: number | null;
+  indexed_at: string | null;
+  queue_position: number | null; // 1 = next to be indexed
+}
+
+/** A file on a share that isn't indexed. path ends in "/" for an excluded folder. */
+export interface SkippedFile {
+  source_id: number;
+  path: string;
+  reason: "unsupported" | "empty" | "too_large" | "excluded";
+  size_bytes: number | null;
+}
+
+export type IndexAction = "reindex" | "exclude" | "include";
+
+export interface ActionResult {
+  changed: number[];
+  skipped: { id: number; reason: string }[];
 }
 
 /** A file share the documents are indexed from. */
@@ -143,6 +162,9 @@ export const api = {
   sources: () => request<DocSource[]>("GET", "/api/sources"),
   scanSource: (id: number) => request<void>("POST", `/api/sources/${id}/scan`),
   removeSource: (id: number) => request<void>("DELETE", `/api/sources/${id}`),
+  indexAction: (action: IndexAction, document_ids: number[]) =>
+    request<ActionResult>("POST", "/api/indexing/actions", { action, document_ids }),
+  skippedFiles: () => request<SkippedFile[]>("GET", "/api/indexing/skipped"),
   fileUrl: (id: number, page?: number | null) =>
     `/api/documents/${id}/file${page ? `#page=${page}` : ""}`,
 

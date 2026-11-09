@@ -3,13 +3,21 @@ SKIP LOCKED). Every read takes a Viewer and filters in SQL (app.auth.acl)."""
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from sqlalchemy import Engine, delete, exists, func, insert, select, text, update
 from sqlalchemy.exc import IntegrityError
 
 from app.auth.acl import Viewer, can_manage, can_see
-from app.db.tables import chunks, document_groups, documents, ingest_jobs, sources, user_groups
+from app.db.tables import (
+    chunks,
+    document_groups,
+    documents,
+    ingest_jobs,
+    source_skipped,
+    sources,
+    user_groups,
+)
 
 
 @dataclass(frozen=True)
@@ -30,6 +38,27 @@ class DocumentInfo:
     updated_at: datetime
     source_id: int | None = None  # file share; None for uploads
     source_path: str | None = None  # path within the share
+    progress_done: int | None = None  # excerpts embedded so far (while processing)
+    progress_total: int | None = None
+    indexed_at: datetime | None = None
+    queue_position: int | None = None  # 1 = next to be indexed
+
+
+@dataclass(frozen=True)
+class SkippedFile:
+    source_id: int
+    path: str
+    reason: str  # unsupported | empty | too_large | excluded
+    size_bytes: int | None
+
+
+@dataclass
+class BulkResult:
+    changed: list[int]
+    skipped: dict[int, str]  # document id -> why it was left alone
+
+
+Action = Literal["reindex", "exclude", "include"]
 
 
 @dataclass(frozen=True)
@@ -158,24 +187,47 @@ def _info_query(embed_model: str, viewer: Viewer) -> Any:
         .correlate(documents)
         .scalar_subquery()
     )
-    return select(
-        documents.c.id,
-        documents.c.filename,
-        documents.c.status,
-        documents.c.error,
-        documents.c.content_type,
-        documents.c.size_bytes,
-        documents.c.page_count,
-        n_chunks.label("chunks"),
-        stale.label("stale"),
-        documents.c.uploaded_by,
-        shared.label("group_ids"),
-        can_manage(viewer).label("can_manage"),
-        documents.c.created_at,
-        documents.c.updated_at,
-        documents.c.source_id,
-        documents.c.source_path,
-    ).where(can_see(viewer))
+    # Position in the queue: rank of the document's earliest queued job among
+    # all queued jobs (one window pass, not a count per document).
+    ranked = (
+        select(
+            ingest_jobs.c.document_id,
+            func.row_number().over(order_by=ingest_jobs.c.id).label("pos"),
+        )
+        .where(ingest_jobs.c.status == "queued")
+        .subquery()
+    )
+    queue = (
+        select(ranked.c.document_id, func.min(ranked.c.pos).label("queue_position"))
+        .group_by(ranked.c.document_id)
+        .subquery()
+    )
+    return (
+        select(
+            documents.c.id,
+            documents.c.filename,
+            documents.c.status,
+            documents.c.error,
+            documents.c.content_type,
+            documents.c.size_bytes,
+            documents.c.page_count,
+            n_chunks.label("chunks"),
+            stale.label("stale"),
+            documents.c.uploaded_by,
+            shared.label("group_ids"),
+            can_manage(viewer).label("can_manage"),
+            documents.c.created_at,
+            documents.c.updated_at,
+            documents.c.source_id,
+            documents.c.source_path,
+            documents.c.progress_done,
+            documents.c.progress_total,
+            documents.c.indexed_at,
+            queue.c.queue_position,
+        )
+        .select_from(documents.outerjoin(queue, queue.c.document_id == documents.c.id))
+        .where(can_see(viewer))
+    )
 
 
 def _to_info(row: Any) -> DocumentInfo:
@@ -255,12 +307,117 @@ def enqueue_reindex(engine: Engine, doc_id: int, viewer: Viewer) -> None:
             raise ConflictError("The original file wasn't kept for this document; upload it again")
         if row.status in ("pending", "processing"):
             raise ConflictError("This document is already queued or being processed")
+        if row.status == "excluded":
+            raise ConflictError("This document is excluded from the index; include it first")
         conn.execute(
             update(documents)
             .where(documents.c.id == doc_id)
             .values(status="pending", error=None, updated_at=func.now())
         )
         conn.execute(insert(ingest_jobs).values(document_id=doc_id, kind="reindex"))
+
+
+def apply_action(engine: Engine, action: Action, doc_ids: list[int], viewer: Viewer) -> BulkResult:
+    """The Indexing page's actions, on documents the viewer may manage, in one
+    transaction (the rows are locked, so the worker sees the change at its next
+    excerpt and stops).
+      reindex  ready/failed -> queued again
+      exclude  anything -> excluded: queued or running jobs cancelled, chunks
+               deleted, never queued again (a share scan keeps it excluded)
+      include  excluded -> queued again
+    """
+    result = BulkResult(changed=[], skipped={})
+    wanted = sorted(set(doc_ids))
+    with engine.begin() as conn:
+        rows = {
+            r.id: r
+            for r in conn.execute(
+                select(
+                    documents.c.id,
+                    documents.c.status,
+                    documents.c.storage_path,
+                    can_manage(viewer).label("manage"),
+                )
+                .where(documents.c.id.in_(wanted), can_see(viewer))
+                .with_for_update(of=documents)
+            )
+        }
+        for doc_id in wanted:
+            row = rows.get(doc_id)
+            if row is None:
+                result.skipped[doc_id] = "not found"
+                continue
+            if not row.manage:
+                result.skipped[doc_id] = "only the uploader or an administrator can change it"
+                continue
+            reason = _apply_one(conn, action, row)
+            if reason:
+                result.skipped[doc_id] = reason
+            else:
+                result.changed.append(doc_id)
+    return result
+
+
+def _apply_one(conn: Any, action: Action, row: Any) -> str | None:
+    """Returns why the document was left alone, or None if changed."""
+    if action == "exclude":
+        if row.status == "excluded":
+            return "already excluded"
+        conn.execute(
+            update(ingest_jobs)
+            .where(
+                ingest_jobs.c.document_id == row.id, ingest_jobs.c.status.in_(["queued", "running"])
+            )
+            .values(status="cancelled", finished_at=func.now())
+        )
+        conn.execute(delete(chunks).where(chunks.c.document_id == row.id))
+        _set(conn, row.id, "excluded")
+        return None
+    if action == "include":
+        if row.status != "excluded":
+            return "not excluded"
+        _set(conn, row.id, "pending")
+        conn.execute(insert(ingest_jobs).values(document_id=row.id, kind="ingest"))
+        return None
+    # reindex
+    if row.status in ("pending", "processing"):
+        return "already queued or being indexed"
+    if row.status == "excluded":
+        return "excluded; include it to index it again"
+    if row.storage_path is None:
+        return "the original file wasn't kept"
+    _set(conn, row.id, "pending")
+    conn.execute(insert(ingest_jobs).values(document_id=row.id, kind="reindex"))
+    return None
+
+
+def _set(conn: Any, doc_id: int, status: str) -> None:
+    conn.execute(
+        update(documents)
+        .where(documents.c.id == doc_id)
+        .values(
+            status=status,
+            error=None,
+            progress_done=None,
+            progress_total=None,
+            updated_at=func.now(),
+        )
+    )
+
+
+def list_skipped(engine: Engine) -> list[SkippedFile]:
+    """Files on the shares that aren't indexed (administrators only: paths on a
+    share aren't filtered by document visibility)."""
+    with engine.connect() as conn:
+        rows = conn.execute(
+            select(
+                source_skipped.c.source_id,
+                source_skipped.c.path,
+                source_skipped.c.reason,
+                source_skipped.c.size_bytes,
+            ).order_by(source_skipped.c.source_id, source_skipped.c.path)
+        ).all()
+    return [SkippedFile(**dict(r._mapping)) for r in rows]
 
 
 def set_groups(engine: Engine, doc_id: int, group_ids: list[int], viewer: Viewer) -> None:
@@ -363,10 +520,28 @@ def claim_job(engine: Engine) -> Job | None:
     return Job(row.id, row.document_id, row.kind, row.attempts) if row else None
 
 
+def report_progress(engine: Engine, doc_id: int, done: int, total: int) -> bool:
+    """Record indexing progress. False if the document is no longer being
+    processed (excluded or deleted meanwhile): the worker then stops."""
+    with engine.begin() as conn:
+        row = conn.execute(
+            update(documents)
+            .where(documents.c.id == doc_id, documents.c.status == "processing")
+            .values(progress_done=done, progress_total=total)
+            .returning(documents.c.id)
+        ).one_or_none()
+    return row is not None
+
+
 def finish_job(
-    engine: Engine, job_id: int, *, error: str | None = None, retry: bool = False
+    engine: Engine,
+    job_id: int,
+    *,
+    error: str | None = None,
+    retry: bool = False,
+    cancelled: bool = False,
 ) -> None:
-    status = "queued" if retry else ("failed" if error else "done")
+    status = "cancelled" if cancelled else "queued" if retry else "failed" if error else "done"
     with engine.begin() as conn:
         conn.execute(
             update(ingest_jobs)
@@ -380,7 +555,8 @@ def finish_job(
 
 
 def requeue_stale_jobs(engine: Engine, older_than_s: float) -> int:
-    """Jobs left 'running' by a worker that died go back on the queue."""
+    """Jobs left 'running' by a worker that died go back on the queue, and
+    their documents show as queued again (not as still being indexed)."""
     with engine.begin() as conn:
         result = conn.execute(
             text(
@@ -388,5 +564,12 @@ def requeue_stale_jobs(engine: Engine, older_than_s: float) -> int:
                 "WHERE status = 'running' AND started_at < now() - make_interval(secs => :s)"
             ),
             {"s": older_than_s},
+        )
+        conn.execute(
+            text(
+                "UPDATE documents d SET status = 'pending', progress_done = NULL, "
+                "progress_total = NULL WHERE d.status = 'processing' AND NOT EXISTS "
+                "(SELECT 1 FROM ingest_jobs j WHERE j.document_id = d.id AND j.status = 'running')"
+            )
         )
     return result.rowcount

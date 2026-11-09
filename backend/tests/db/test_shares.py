@@ -190,6 +190,8 @@ def test_identical_files_copy_chunks_instead_of_re_embedding(db: Engine, share: 
     _scan(db, _settings(share.parent))
     docs = _docs(db)
     original, copy = int(docs["leave.txt"]["id"]), int(docs["copy-of-leave.txt"]["id"])
+    with db.begin() as conn:  # the worker marks it processing before copying
+        conn.exec_driver_sql("UPDATE documents SET status = 'processing' WHERE id = %s", (copy,))
     assert copy_from_duplicate(db, copy, str(docs["copy-of-leave.txt"]["sha256"]), "m") is None
     with db.begin() as conn:
         conn.execute(

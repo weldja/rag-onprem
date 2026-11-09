@@ -4,10 +4,11 @@ import Account from "./pages/Account";
 import Admin from "./pages/Admin";
 import Chat, { type PendingAsk } from "./pages/Chat";
 import Documents from "./pages/Documents";
+import Indexing from "./pages/Indexing";
 import Login from "./pages/Login";
 import Sidebar, { type Scope } from "./Sidebar";
 
-type Tab = "ask" | "documents" | "admin" | "account";
+type Tab = "ask" | "documents" | "indexing" | "admin" | "account";
 
 export default function App() {
   const [me, setMe] = useState<Me | null>(null);
@@ -49,7 +50,12 @@ export default function App() {
   const tabs: [Tab, string][] = [
     ["ask", "Ask"],
     ["documents", "Documents"],
-    ...(me.is_admin ? ([["admin", "Admin"]] as [Tab, string][]) : []),
+    ...(me.is_admin
+      ? ([
+          ["indexing", "Indexing"],
+          ["admin", "Admin"],
+        ] as [Tab, string][])
+      : []),
     ["account", "Account"],
   ];
 
@@ -108,8 +114,9 @@ export default function App() {
         />
       </div>
       {tab !== "ask" && (
-        <main>
+        <main className={tab === "indexing" ? "wide" : undefined}>
           {tab === "documents" && <Documents me={me} onSummarise={summarise} />}
+          {tab === "indexing" && me.is_admin && <Indexing />}
           {tab === "admin" && me.is_admin && <Admin me={me} />}
           {tab === "account" && <Account me={me} />}
         </main>
