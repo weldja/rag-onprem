@@ -1,6 +1,7 @@
 # rag-onprem — phased build plan
 
-> **Status (2026-11-07):** Milestones 1–5 are implemented. See `CLAUDE.md` ("Current state") for what was
+> **Status (2026-11-10):** Milestones 1–5 are implemented, plus file shares, the Indexing page and
+> small-GPU tuning. See `CLAUDE.md` ("Current state") for what was
 > built and how it differs from this plan, `docs/eval-results.md` for answer quality, and
 > `docs/operations.md` for installation and operations.
 

@@ -42,6 +42,11 @@ pythonpath = ["."]
 # No test may open a network socket (Unix sockets are allowed for the asyncio
 # self-pipe). Integration tests opt in with @pytest.mark.enable_socket.
 addopts = "--disable-socket --allow-unix-socket -m 'not compose and not db and not ldap'"
+# ldap3 imports names pyasn1 has deprecated; nothing for us to change.
+filterwarnings = [
+    "ignore:tagMap is deprecated:DeprecationWarning",
+    "ignore:typeMap is deprecated:DeprecationWarning",
+]
 markers = [
     "compose: needs the running docker compose stack (scripts/e2e.sh)",
     "db: needs a Postgres test database (scripts/test-db.sh)",

@@ -49,7 +49,7 @@ into an offline bundle). It is **never** allowed at container start or at reques
 | Reverse proxy | **nginx** | Serves the frontend, proxies `/api`, terminates TLS using a customer-supplied certificate. Avoid Caddy's automatic HTTPS, which contacts ACME. |
 | Auth | Local accounts (argon2 hashes) + session cookies; LDAP/AD later | Document-level ACLs are enforced **in the retrieval SQL**, not after retrieval. |
 | Tests | pytest, pytest-asyncio, **pytest-socket** (`--disable-socket`, allow only localhost/compose hosts) | The test suite itself enforces "no egress". |
-| Lint/format/types | ruff, mypy (strict on `app/`); eslint + prettier for frontend | |
+| Lint/format/types | ruff, mypy (strict on `app/`); TypeScript `strict` (`tsc -b`) for frontend | No eslint/prettier set up yet |
 
 ## Architecture
 
@@ -61,7 +61,7 @@ browser ──HTTPS──> nginx ──> api (FastAPI) ──> postgres+pgvector
 ```
 
 - **Ingestion:** upload → store the original file in a volume → job row → worker parses, chunks
-  (token-aware, roughly 500–800 tokens with overlap, keeping heading/page metadata), embeds in batches, then writes
+  (`CHUNK_SIZE` 1000 characters, `CHUNK_OVERLAP` 150, keeping heading/page metadata), embeds, then writes
   chunks and vectors in a single transaction. Re-ingestion is idempotent, keyed on content hash.
 - **Query:** embed question → hybrid retrieval (vector + full-text, merged with reciprocal rank fusion),
   filtered by the user's ACL → optional rerank → prompt with numbered context → stream answer (SSE)
@@ -76,18 +76,22 @@ browser ──HTTPS──> nginx ──> api (FastAPI) ──> postgres+pgvector
 
 ```
 backend/
-  app/            # api/, core/ (config, logging), db/, ingestion/, retrieval/, llm/, auth/
+  app/            # api/, auth/, core/ (config), db/, ingestion/, llm/ (+ prompts/), retrieval/
+  evals/          # answer-quality eval (scripts/eval.sh) and retrieval probe
   migrations/     # Alembic
-  tests/
+  tests/          # unit; db/ (Postgres), ldap_live/ (OpenLDAP)
   pyproject.toml, uv.lock, Dockerfile
 frontend/         # Vite + React + TS, Dockerfile builds static assets into nginx image
 deploy/
   docker-compose.yml           # production-style, internal network
   docker-compose.dev.yml       # dev overrides (bind mounts, hot reload, exposed ports)
-  nginx/
-  offline-bundle/              # scripts to docker save images + package model weights
-scripts/          # bash helper scripts (dev up/down, pull models, export bundle)
-docs/
+  docker-compose.gpu.yml       # NVIDIA GPU for the dev stack (DEV_GPU=1)
+  nginx/                       # nginx config template
+  ollama/                      # ollama image; models are pulled in at build time
+  release/                     # customer kit: compose files and install/upgrade/backup/restore scripts
+  certs/, empty-share/
+scripts/          # bash helpers (dev up/down, tests, eval, ingest, build-release)
+docs/             # build-plan, operations (the bundle's README), eval-results
 ```
 
 ## Offline hardening checklist

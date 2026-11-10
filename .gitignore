@@ -5,7 +5,6 @@
 *.pem
 *.key
 *.crt
-!deploy/nginx/**/*.example.*
 
 # --- Python (backend) ---
 __pycache__/
@@ -41,7 +40,6 @@ pnpm-debug.log*
 *.onnx
 *.pt
 *.pth
-deploy/offline-bundle/out/
 *.tar
 *.tar.gz
 *.tgz
