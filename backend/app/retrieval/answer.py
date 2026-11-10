@@ -8,7 +8,8 @@ map back to the retrieved chunks.
 Two modes:
   answer   hybrid retrieval for the question (plus the previous question when
            the new one looks like a follow-up), answer prompt
-  summary  chunks sampled across the chosen documents, summary prompt
+  summary  chunks sampled across the chosen documents, summary prompt; also
+           used for a typed request like "summarise this doc" (asks_for_summary)
 """
 
 import html
@@ -60,6 +61,47 @@ class Answer:
 
 
 NOT_FOUND = Answer(NOT_FOUND_ANSWER, found=False, sources=[])
+
+
+# Typed requests for a summary of the chosen documents as a whole ("summarise
+# this doc", "give me an overview of the manual"). Answer mode would search for
+# the words "summarise this doc" and find nothing relevant. A request naming a
+# topic ("summarise the SSO section") stays a question.
+_SUMMARY_ASK = re.compile(
+    r"\b(summar(y|ies|i[sz]e|i[sz]ing)|overview|tl;?dr|gist|"
+    r"what\b.*\babout|what\b.*\bcover(s|ed)?)\b"
+)
+_FILENAME = re.compile(r"\S+\.[a-z0-9]{2,5}\b")
+_FILLER_WORDS = """
+    a about all an and any as be bullet bullets brief briefly can content contents cover covered
+    covers could describe do does doc docs document documents each entire explain file files for
+    full gist give i in is it its key list main manual me my of on one overview page pages paper
+    paragraph paragraphs pdf please point points provide quick quickly report s sentence sentences
+    short summaries summarise summarize summarising summarizing summary tell than that the these
+    this those three tldr to two up us want what whats whole with would write you
+"""
+_FILLER = frozenset(_FILLER_WORDS.split())
+
+
+def mentions_summary(question: str) -> bool:
+    """Cheap first check for asks_for_summary (no document names needed)."""
+    return _SUMMARY_ASK.search(question.lower()) is not None
+
+
+def asks_for_summary(question: str, document_names: Sequence[str] = ()) -> bool:
+    """True if the question only asks for a summary of the documents in scope:
+    after dropping file names, words of the scoped documents' names, numbers
+    and filler, nothing is left."""
+    if not mentions_summary(question):
+        return False
+    q = re.sub(r"\btl;?dr\b", " ", _FILENAME.sub(" ", question.lower()))
+    names = {w for n in document_names for w in re.findall(r"[a-z0-9]+", n.lower())}
+    rest = [
+        w
+        for w in re.findall(r"[a-z0-9]+", q)
+        if w not in _FILLER and w not in names and not w.isdigit()
+    ]
+    return not rest
 
 
 @dataclass(frozen=True)
@@ -223,10 +265,13 @@ def gather(
     return hits
 
 
-def reading_status(hits: list[RetrievedChunk], *, cached: bool = False) -> dict[str, Any]:
+def reading_status(
+    hits: list[RetrievedChunk], *, cached: bool = False, summary: bool = False
+) -> dict[str, Any]:
     """The "generating" status event: what the model is about to read, so the
     user sees progress (and where the answer will come from) during the wait
-    before the first word."""
+    before the first word. `summary` tells the client the answer is a summary
+    (the server may have recognised a typed request for one)."""
     names = list(dict.fromkeys(h.filename for h in hits))
     event: dict[str, Any] = {
         "type": "status",
@@ -236,6 +281,8 @@ def reading_status(hits: list[RetrievedChunk], *, cached: bool = False) -> dict[
     }
     if cached:
         event["cached"] = True
+    if summary:
+        event["summary"] = True
     return event
 
 
@@ -285,7 +332,8 @@ def answer_events(
 ) -> Iterator[dict[str, Any]]:
     """Streaming protocol (event dicts, each with a "type"):
       status  {"stage": "retrieving"}
-      status  {"stage": "generating", "excerpts": n, "documents": [names][, "cached": true]}
+      status  {"stage": "generating", "excerpts": n, "documents": [names]
+               [, "cached": true][, "summary": true]}
       token   {"text": "..."}                    zero or more
       done    {"answer", "found", "sources"[, "retrieved"]}   final, authoritative
       error   {"message": "..."}                 instead of done
@@ -308,13 +356,13 @@ def answer_events(
         if cached is not None:
             timer.cached = True
             timer.word()
-            yield reading_status(hits, cached=True)
+            yield reading_status(hits, cached=True, summary=req.mode == "summary")
             yield {"type": "token", "text": cached}
             result = finalise(cached, hits, req.mode)
             timer.log(hits, found=result.found)
             yield {"type": "done", **answer_dict(result, debug)}
             return
-        yield reading_status(hits)
+        yield reading_status(hits, summary=req.mode == "summary")
         parts: list[str] = []
         for piece in llm.chat_stream(messages):
             if piece.strip():

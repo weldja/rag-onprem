@@ -13,7 +13,8 @@ Metrics (answerable cases unless noted):
   abstention         unanswerable cases correctly answered "not found"
   summary_cited      summary cases ("summary_of") that cite the summarised document
   summary_accuracy   summary cases that contain every expected fact
-Summary cases are kept out of the question metrics above.
+Summary cases are kept out of the question metrics above. A "typed" summary case
+sends the request as an ordinary question limited to the document.
 """
 
 import argparse
@@ -148,7 +149,11 @@ def run_case(
         "debug": True,
     }
     if "summary_of" in case:
-        payload |= {"mode": "summary", "document_ids": [(doc_ids or {})[case["summary_of"]]]}
+        payload["document_ids"] = [(doc_ids or {})[case["summary_of"]]]
+        # "typed": the user typed the request with the document in scope, as
+        # an ordinary question; the server should still answer with a summary.
+        if not case.get("typed"):
+            payload["mode"] = "summary"
     started = time.monotonic()
     resp = client.post("/api/ask", json=payload)
     resp.raise_for_status()

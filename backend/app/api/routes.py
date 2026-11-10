@@ -24,12 +24,21 @@ from app.db.priority import Answering
 from app.llm.base import ChatMessage, Embedder, LLMClient
 from app.llm.ollama import OllamaClient, OllamaError
 from app.llm.prompts import prompt_version
-from app.retrieval.answer import Request, answer_events, answer_question
+from app.retrieval.answer import (
+    Mode,
+    Request,
+    answer_events,
+    answer_question,
+    asks_for_summary,
+    mentions_summary,
+)
 from app.retrieval.cache import AnswerCache
 from app.retrieval.service import Search
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api")
+
+MAX_SUMMARY_DOCUMENTS = 5
 
 
 class Turn(BaseModel):
@@ -53,8 +62,8 @@ class AskRequest(BaseModel):
     def _summary_needs_documents(self) -> "AskRequest":
         if self.mode == "summary" and not self.document_ids:
             raise ValueError("summary mode needs document_ids")
-        if self.mode == "summary" and len(self.document_ids or []) > 5:
-            raise ValueError("summarise at most 5 documents at a time")
+        if self.mode == "summary" and len(self.document_ids or []) > MAX_SUMMARY_DOCUMENTS:
+            raise ValueError(f"summarise at most {MAX_SUMMARY_DOCUMENTS} documents at a time")
         return self
 
 
@@ -83,12 +92,25 @@ def _cache(body: AskRequest, cache: AnswerCache) -> AnswerCache | None:
     return None if body.debug else cache
 
 
-def _request(body: AskRequest, settings: AppSettings) -> Request:
+def _mode(body: AskRequest, search: Search) -> Mode:
+    """A question that only asks for a summary of the documents it is limited
+    to ("summarise this doc") runs as a summary, as if the Summary link had
+    been used."""
+    ids = body.document_ids or []
+    if body.mode == "summary" or not 0 < len(ids) <= MAX_SUMMARY_DOCUMENTS:
+        return body.mode
+    if not mentions_summary(body.question):
+        return body.mode
+    names = search.names(ids)
+    return "summary" if names and asks_for_summary(body.question, names) else body.mode
+
+
+def _request(body: AskRequest, mode: Mode, settings: AppSettings) -> Request:
     history: list[ChatMessage] = [{"role": t.role, "content": t.content} for t in body.history]
     return Request(
         question=body.question.strip(),
         history=history,
-        mode=body.mode,
+        mode=mode,
         history_turns=settings.history_turns,
     )
 
@@ -141,12 +163,13 @@ def ask(
     settings: AppSettings,
 ) -> AskResponse:
     ids = body.document_ids
+    mode = _mode(body, search)
     try:
         with answering():
             result = answer_question(
-                _request(body, settings),
+                _request(body, mode, settings),
                 retrieve=search.retriever(ids),
-                spread=(lambda: search.spread(ids or [])) if body.mode == "summary" else None,
+                spread=(lambda: search.spread(ids or [])) if mode == "summary" else None,
                 llm=llm,
                 embedder=embedder,
                 cache=_cache(body, cache),
@@ -187,10 +210,11 @@ def ask_stream(
 ) -> StreamingResponse:
     """Server-sent events; see app.retrieval.answer.answer_events for the protocol."""
     ids = body.document_ids
+    mode = _mode(body, search)
     events = answer_events(
-        _request(body, settings),
+        _request(body, mode, settings),
         retrieve=search.retriever(ids),
-        spread=(lambda: search.spread(ids or [])) if body.mode == "summary" else None,
+        spread=(lambda: search.spread(ids or [])) if mode == "summary" else None,
         llm=llm,
         embedder=embedder,
         debug=body.debug,

@@ -43,7 +43,7 @@ into an offline bundle). It is **never** allowed at container start or at reques
 | Vector store + DB | **PostgreSQL 16 + pgvector** | One stateful service holds documents, chunks, vectors, users, ACLs and job queue. Gives hybrid search (pgvector + `tsvector` full-text) and a single backup target. Qdrant is the alternative if vector scale outgrows Postgres. |
 | Backend | **Python 3.12, FastAPI**, Pydantic v2, SQLAlchemy 2 + psycopg 3, Alembic | |
 | Dependency mgmt | **uv** (`pyproject.toml` + `uv.lock`) | Reproducible locked installs. `uv run` avoids venv-activation differences on Windows. |
-| Document parsing | `pypdf`, `python-docx`, `openpyxl`, `beautifulsoup4`, plain text/Markdown | Permissive licences. **Do not use PyMuPDF** (AGPL). OCR and layout-aware parsing (e.g. Docling) are phase 2. Their models must be baked into the image. |
+| Document parsing | `pypdfium2` (PDF), `python-docx`, `python-pptx`, `openpyxl`, `beautifulsoup4`, plain text/Markdown | Permissive licences. pypdf ran words together on some PDFs; it's now a dev dependency for building test PDFs. **Do not use PyMuPDF** (AGPL). OCR and layout-aware parsing (e.g. Docling) are phase 2. Their models must be baked into the image. |
 | Background jobs | Postgres-backed queue (`SELECT … FOR UPDATE SKIP LOCKED`) run by a worker process | No Redis or Celery to deploy and support. |
 | Frontend | **React + TypeScript + Vite**, built to static files | No runtime CDN. Fonts and icons are bundled. |
 | Reverse proxy | **nginx** | Serves the frontend, proxies `/api`, terminates TLS using a customer-supplied certificate. Avoid Caddy's automatic HTTPS, which contacts ACME. |
@@ -250,6 +250,8 @@ Milestone 4 (answer quality):
   exchanges go to the LLM with old `[n]` markers stripped, and short follow-ups also retrieve with the
   previous question.
 - Summary mode: `mode: "summary"` + `document_ids` samples chunks evenly across the document.
+  A typed "summarise this doc" with 1–5 documents in scope also runs as a summary
+  (`answer.asks_for_summary`; the `generating` event then carries `summary: true`).
 - Retrieval drops chunks whose text duplicates an already selected chunk.
 - Chunks are embedded as "document name - section" + text (`pipeline.embedding_text`); stored
   text, keyword search and prompts use the plain text. Changing that input means re-indexing.

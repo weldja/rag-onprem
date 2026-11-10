@@ -11,7 +11,12 @@ from app.auth.acl import Viewer
 from app.core.config import Settings
 from app.retrieval.answer import Retriever
 from app.retrieval.rerank import Reranker, rerank
-from app.retrieval.search import RetrievedChunk, document_spread, hybrid_search
+from app.retrieval.search import (
+    RetrievedChunk,
+    document_names,
+    document_spread,
+    hybrid_search,
+)
 
 
 class Search(Protocol):
@@ -21,6 +26,10 @@ class Search(Protocol):
 
     def spread(self, document_ids: Sequence[int]) -> list[RetrievedChunk]:
         """Chunks sampled across whole documents, for summaries."""
+        ...
+
+    def names(self, document_ids: Sequence[int]) -> list[str]:
+        """File names of the documents the viewer can see."""
         ...
 
 
@@ -68,3 +77,6 @@ class DbSearch:
             # read whole without making the summary any slower.
             max_chars_per_document=per_doc * self._s.chunk_size,
         )
+
+    def names(self, document_ids: Sequence[int]) -> list[str]:
+        return document_names(self._engine, document_ids, viewer=self._viewer)

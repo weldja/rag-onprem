@@ -20,9 +20,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from pypdf import PdfReader
-from pypdf.errors import PdfReadError
-
 from app.ingestion.chunking import Document
 from app.ingestion.ocr import OcrError, OcrOptions, image_frames, ocr_image, render_pdf_page
 
@@ -54,17 +51,44 @@ def _clean(text: str) -> str:
 # --------------------------------------------------------------------------- PDF
 
 
-def load_pdf(path: Path, ocr: OcrOptions | None = None) -> LoadedDocument:
-    """Text layer per page. Pages with (almost) no text layer, i.e. scans, are
-    OCR'd when `ocr` is enabled, up to ocr.max_pages per document."""
+def pdfium_text(raw: str) -> str:
+    """PDFium's page text as plain text: it ends lines with CRLF and writes a
+    hyphen that ends a line (the line break dropped) as U+0002."""
+    return raw.replace("\r\n", "\n").replace("\r", "\n").replace("\x02", "-").replace("\xa0", " ")
+
+
+def _page_text(pdf: Any, index: int) -> str:
+    page = pdf[index]
     try:
-        reader = PdfReader(str(path))
-        if reader.is_encrypted:
-            raise LoadError(f"{path.name} is encrypted")
+        textpage = page.get_textpage()
+        try:
+            return pdfium_text(textpage.get_text_bounded())
+        finally:
+            textpage.close()
+    finally:
+        page.close()
+
+
+def load_pdf(path: Path, ocr: OcrOptions | None = None) -> LoadedDocument:
+    """Text layer per page, read with PDFium. pypdf ran the words together on
+    some PDFs ("Mounttheserversinracks"), which ruined search on them. Pages
+    with (almost) no text layer, i.e. scans, are OCR'd when `ocr` is enabled,
+    up to ocr.max_pages per document."""
+    import pypdfium2
+
+    try:
+        pdf = pypdfium2.PdfDocument(str(path))
+    except pypdfium2.PdfiumError as exc:
+        # PDFium error 4 is FPDF_ERR_PASSWORD.
+        if getattr(exc, "err_code", None) == 4:
+            raise LoadError(f"{path.name} is encrypted") from exc
+        raise LoadError(f"{path.name} is not a readable PDF: {exc}") from exc
+    try:
         pages: list[Document] = []
         ocr_done = 0
-        for number, page in enumerate(reader.pages, start=1):
-            text = _clean(page.extract_text() or "")
+        page_count = len(pdf)
+        for number in range(1, page_count + 1):
+            text = _clean(_page_text(pdf, number - 1))
             meta: dict[str, Any] = {"page": number}
             if ocr is not None and ocr.enabled and len(text) < ocr.min_chars:
                 if ocr_done < ocr.max_pages:
@@ -76,11 +100,13 @@ def load_pdf(path: Path, ocr: OcrOptions | None = None) -> LoadedDocument:
                 ocr_done += 1
             if text:
                 pages.append(Document(page_content=text, metadata=meta))
-        return LoadedDocument(pages=pages, page_count=len(reader.pages))
-    except PdfReadError as exc:
+        return LoadedDocument(pages=pages, page_count=page_count)
+    except pypdfium2.PdfiumError as exc:
         raise LoadError(f"{path.name} is not a readable PDF: {exc}") from exc
     except OcrError as exc:
         raise LoadError(f"{path.name}: {exc}") from exc
+    finally:
+        pdf.close()
 
 
 # ------------------------------------------------------------------------ images

@@ -12,7 +12,7 @@ from app.auth.acl import Viewer
 from app.core.config import Settings, get_settings
 from app.db.tables import chunks
 from app.ingestion import registry
-from app.retrieval.search import document_spread, hybrid_search
+from app.retrieval.search import document_names, document_spread, hybrid_search
 
 pytestmark = [pytest.mark.db, pytest.mark.enable_socket]
 
@@ -215,6 +215,13 @@ def test_spread_samples_in_reading_order_within_acl(db: Engine, world: dict[str,
         )
         == []
     )
+
+
+def test_document_names_within_acl(db: Engine, world: dict[str, int]) -> None:
+    ids = [world["budget"], world["salaries"], world["draft"]]
+    fiona, harry = _viewer(db, world["fiona"]), _viewer(db, world["harry"])
+    assert document_names(db, ids, viewer=fiona) == ["budget.txt", "draft.txt"]
+    assert document_names(db, ids, viewer=harry) == ["salaries.txt"]
 
 
 def test_sharing_is_limited_to_own_groups(db: Engine, world: dict[str, int]) -> None:

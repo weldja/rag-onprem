@@ -8,6 +8,7 @@ from app.retrieval.answer import (
     Request,
     answer_events,
     answer_question,
+    asks_for_summary,
     build_context,
     build_messages,
     parse_citations,
@@ -21,6 +22,27 @@ from tests.fakes import FakeEmbedder, FakeLLM, chunk, fixed_retriever
 
 def ask(question: str, **kw: object) -> Request:
     return Request(question=question, **kw)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("question", "expected"),
+    [
+        ("In ENC_Administrator_Manual.pdf\nsummarise this doc", True),
+        ("Summarise", True),
+        ("Can you summarize the document please?", True),
+        ("Give me a short overview of the complaints procedure", True),  # name of the doc
+        ("Summarise this in 5 bullet points", True),
+        ("What is this document about?", True),
+        ("tl;dr", True),
+        ("Summarise the section on single sign-on", False),
+        ("What does the manual say about backups?", False),
+        ("How many days of leave can I carry over?", False),
+        ("Give me an overview of the escalation steps", False),
+    ],
+)
+def test_asks_for_summary(question: str, expected: bool) -> None:
+    names = ["ENC_Administrator_Manual.pdf", "Complaints_Procedure.docx"]
+    assert asks_for_summary(question, names) is expected
 
 
 def test_parse_citations_dedupes_orders_and_drops_out_of_range() -> None:

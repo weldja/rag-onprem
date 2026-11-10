@@ -79,6 +79,9 @@ Configuration lives in `.env`, which is readable only by its owner. After changi
   scanned images (PNG, JPEG, TIFF).
   - Each document is visible only to its uploader, administrators, and the groups it's shared with.
   - Indexing runs in the background, and the status column shows progress.
+  - Password-protected PDFs can't be read; PDFs that only restrict editing or printing can.
+  - **Summaries:** click **Summary** next to a file, or limit the question to one file (up to
+    five) in the sidebar and ask "summarise this".
   - Scanned PDF pages and images are read with OCR on this server. Scanned documents take longer to
     index, roughly a few seconds per page. Clean scans at 300 dpi read best; photos of paper and
     handwriting may read poorly.
@@ -264,9 +267,11 @@ If a release changes the embedding model, documents need re-indexing. They're sh
 
 **Upgrading from 1.0.0-rc6 or earlier:** re-index once after the upgrade. On the **Indexing**
 page, select the **Indexed** group and choose **Re-index all**. Questions keep working
-meanwhile. Until a document is re-indexed it misses two improvements: each excerpt is now
+meanwhile. Until a document is re-indexed it misses three improvements: each excerpt is now
 indexed with its document's name (a question naming a form or manual finds excerpts deep
-inside it), and merged table cells in Word documents are read once rather than repeated.
+inside it), merged table cells in Word documents are read once rather than repeated, and
+PDFs are read with a different reader that keeps the spaces between words (some PDFs used to
+come out as "Mounttheserversinracks", which search couldn't match).
 
 ## 7. Troubleshooting
 

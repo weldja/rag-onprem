@@ -102,6 +102,26 @@ def test_summary_mode(client: TestClient) -> None:
     assert ("spread", [5]) in search.scopes
 
 
+def test_typed_summary_request_runs_as_summary(client: TestClient) -> None:
+    spread = [chunk(1, page=3, filename="ENC_Administrator_Manual.pdf")]
+    _, search = override_with_search("Overview [1].", FakeSearch([chunk(2)], spread=spread))
+    for q in (
+        "In ENC_Administrator_Manual.pdf\nsummarise this doc",
+        "Give me an overview of the ENC administrator manual",
+    ):
+        body = client.post("/api/ask", json={"question": q, "document_ids": [1]}).json()
+        assert body["sources"][0]["page"] == 3
+    with client.stream(
+        "POST", "/api/ask/stream", json={"question": "Summarise this", "document_ids": [1]}
+    ) as resp:
+        assert '"summary": true' in "".join(resp.iter_text())
+    assert search.scopes.count(("spread", [1])) == 3
+    # A topic stays a question, and without a scope there's nothing to summarise.
+    client.post("/api/ask", json={"question": "Summarise the SSO section", "document_ids": [1]})
+    client.post("/api/ask", json={"question": "summarise this doc"})
+    assert search.scopes.count(("spread", [1])) == 3
+
+
 def test_summary_mode_needs_documents(client: TestClient) -> None:
     override("x", [])
     resp = client.post("/api/ask", json={"question": "Summarise", "mode": "summary"})

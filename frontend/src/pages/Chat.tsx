@@ -225,12 +225,13 @@ export default function Chat({
         options,
         (ev) => {
           if (ev.type === "status" && ev.stage === "generating")
-            update(id, {
+            update(id, (t) => ({
               stage: "generating",
               excerpts: ev.excerpts ?? null,
               documents: ev.documents ?? [],
               cached: !!ev.cached,
-            });
+              summary: t.summary || !!ev.summary,
+            }));
           else if (ev.type === "status") update(id, { stage: ev.stage });
           else if (ev.type === "token") update(id, (t) => ({ answer: t.answer + ev.text }));
           else if (ev.type === "done")

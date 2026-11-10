@@ -44,6 +44,31 @@ def test_not_a_pdf_raises_load_error(tmp_path: Path) -> None:
         load_pdf(bad)
 
 
+def test_password_protected_pdf_is_refused_but_restricted_one_is_read(tmp_path: Path) -> None:
+    import io
+
+    from pypdf import PdfReader, PdfWriter
+
+    for user_password in ("secret", ""):  # "" = opens freely, only editing is restricted
+        writer = PdfWriter()
+        writer.append(PdfReader(io.BytesIO(make_pdf([["Restricted but readable"]]))))
+        writer.encrypt(user_password=user_password, owner_password="owner")
+        path = tmp_path / f"locked-{bool(user_password)}.pdf"
+        writer.write(path)
+        if user_password:
+            with pytest.raises(LoadError, match="encrypted"):
+                load_pdf(path)
+        else:
+            assert "Restricted but readable" in load_pdf(path).pages[0].page_content
+
+
+def test_pdfium_text_normalises_line_ends_and_hyphens() -> None:
+    from app.ingestion.loaders import pdfium_text
+
+    raw = "Single Sign-On\r\nfor a high\x02availability\xa0server\r"
+    assert pdfium_text(raw) == "Single Sign-On\nfor a high-availability server\n"
+
+
 # --------------------------------------------------------------- DOCX
 
 

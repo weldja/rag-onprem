@@ -86,6 +86,10 @@ class FakeSearch:
         self.scopes.append(("spread", list(document_ids)))
         return self.spread_hits
 
+    def names(self, document_ids):  # type: ignore[no-untyped-def]
+        by_id = {h.document_id: h.filename for h in self.hits + self.spread_hits}
+        return [by_id[i] for i in document_ids if i in by_id]
+
 
 class FakeReranker:
     """Scores by how many times the query's first word appears in the text."""

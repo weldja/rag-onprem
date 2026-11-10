@@ -191,7 +191,12 @@ abstention 1.0 (4/4), follow-up 1/1, summaries 1/2. Median 14 s per question.
   runs, content correct each time). Re-check with the shorter summary prompt.
 - **One PDF (ENC Administrator Manual R11.3) extracts without spaces between words**
   ("EnsembleControllerR11.3AdministratorManual"). Both questions on it still passed, but
-  keyword search can't match words run together. Worth a look at pypdf's layout mode.
+  keyword search can't match words run together. *Fixed 2026-11-10:* PDFs are now read with
+  pypdfium2 (already in the image for OCR), which keeps the spaces and read the 474-page manual
+  in 1.4 s against pypdf's 17 s.
+- **"summarise this doc" typed with one document in scope answered "not found"** (2026-11-10):
+  it ran as a question, retrieving whatever matched the words "summarise this doc". The server
+  now runs such requests as summaries (`answer.asks_for_summary`).
 
 ## Before changing prompts or retrieval
 

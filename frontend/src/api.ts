@@ -190,7 +190,14 @@ export const api = {
 
 export type AskEvent =
   | { type: "status"; stage: "retrieving" }
-  | { type: "status"; stage: "generating"; excerpts?: number; documents?: string[]; cached?: boolean }
+  | {
+      type: "status";
+      stage: "generating";
+      excerpts?: number;
+      documents?: string[];
+      cached?: boolean;
+      summary?: boolean; // the server answered with a summary (e.g. "summarise this doc")
+    }
   | { type: "token"; text: string }
   | ({ type: "done" } & Answer)
   | { type: "error"; message: string };

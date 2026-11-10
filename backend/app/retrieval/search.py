@@ -196,6 +196,20 @@ def summary_positions(lengths: Sequence[int], k: int, max_chars: int | None) -> 
     return spread_positions(len(lengths), k)
 
 
+def document_names(engine: Engine, document_ids: Sequence[int], *, viewer: Viewer) -> list[str]:
+    """File names of the given documents that `viewer` may see."""
+    if not document_ids:
+        return []
+    with engine.connect() as conn:
+        return list(
+            conn.execute(
+                select(documents.c.filename)
+                .where(documents.c.id.in_(list(document_ids)) & can_see(viewer))
+                .order_by(documents.c.id)
+            ).scalars()
+        )
+
+
 def document_spread(
     engine: Engine,
     document_ids: Sequence[int],
