@@ -9,10 +9,12 @@ bash scripts/retrieval-probe.sh              # retrieval + rerank scores only, n
 
 **Corpus:** six fictional company documents, one per supported format (PDF, DOCX, XLSX, PPTX, HTML, MD).
 
-**Cases:** 28 in total:
+**Cases:** 34 in total:
 - 22 single-turn questions with known source and facts, some with two valid sources
 - 2 follow-ups that need conversation history
 - 4 unanswerable questions, including a near miss ("paternity leave" next to the real annual-leave page)
+- 4 summaries (`summary_of`), one of them typed as an ordinary question
+- 2 questions about the collection itself (`library`), answered from the database
 
 The eval user sees only the eval corpus.
 
@@ -42,10 +44,26 @@ The eval user sees only the eval corpus.
 | `phi4-mini`, small-GPU settings† + `EMBED_NUM_GPU=0` | `277b9220b4` | 1.000 | 0.917 | 0.960 | 1.000 | 0 | 0.75 | 4.3 |
 | 7B, small-GPU settings† + `EMBED_NUM_GPU=0` | `277b9220b4` | 1.000 | 1.000 | 0.964 | 1.000 | 0 | 1.0 | 9.9 |
 | **`qwen3:4b-instruct-2507-q4_K_M`, small-GPU settings† + `EMBED_NUM_GPU=0` (small-GPU bundle)** | `277b9220b4` | **1.000** | **1.000** | 0.963 | **1.000** | **0** | **1.0** | **5.4** |
+| Qwen3 4B, main on 2026-11-12 (baseline for the next row) | `277b9220b4` | 1.000 | 1.000 | 0.963 | 1.000 | 0 | 1.0 | 4.9 |
+| **Qwen3 4B, `<excerpt>` tags + collection rule (2026-11-12)** | `89d969a6d5` | **1.000** | **1.000** | 0.929 | **1.000** | **0** | **1.0** | **4.9** |
+| **7B, `<excerpt>` tags + collection rule, small-GPU settings†** | `89d969a6d5` | **1.000** | **1.000** | **1.000** | **1.000** | **0** | **1.0** | 11.4 |
 
 Summary cases (`summary_of` in `cases.json`, added 2026-11-08): Qwen3 4B cited and accurate 2/2,
 median 22 s. In an earlier hand check one of its two summaries was accurate but uncited, so summary
 citations vary a little between runs; the eval now tracks `summary_cited`.
+
+`<excerpt>` tags + collection rule (2026-11-12, the "6 documents indexed" fix; see "Real
+documents"):
+- **Questions:** unchanged on both models. Qwen3 4B adds a note citing the handbook's mileage
+  page next to the spreadsheet answer (`motorcycle-mileage`), hence 0.929. The 7B's precision
+  rose to 1.000.
+- **Summaries:** accurate on both prompts. Citations vary between runs:
+  - Qwen3 4B cited 7 of 10 summaries with the new tags, against 3 of 4 on main.
+  - The 7B cited 2 of 4 with either prompt, on different cases each time.
+  - The 7B's one "inaccurate" summary wrote "March 31st" for "31 March" (on main too); the case
+    now accepts both.
+  - Summary medians: Qwen3 4B 16 s, 7B 57–59 s.
+- **Collection questions:** `library_accuracy` 2/2 on both models, with no model call.
 
 † `LLM_NUM_CTX=4096`, `LLM_MAX_TOKENS=768`, `SUMMARY_CHUNKS=6`, as `install.sh` sets on a GPU under
 6 GB. `phi4-mini` is faster but leaves some answers uncited and answered one question the documents
@@ -197,6 +215,15 @@ abstention 1.0 (4/4), follow-up 1/1, summaries 1/2. Median 14 s per question.
 - **"summarise this doc" typed with one document in scope answered "not found"** (2026-11-10):
   it ran as a question, retrieving whatever matched the words "summarise this doc". The server
   now runs such requests as summaries (`answer.asks_for_summary`).
+- **"how many docs are indexed" answered "6" when 13 were indexed** (2026-11-12). The model
+  counted the six retrieved excerpts, which were wrapped in `<document id="n">` tags. Fixed in
+  two layers:
+  - Questions about the collection itself are answered from the database, with the ACL and
+    scope applied (`retrieval/library.py`; cases `how-many-docs`, `which-docs`, scored as
+    `library_accuracy`).
+  - Excerpts are now wrapped in `<excerpt>` tags, and the answer prompt says they are a few
+    passages picked for the question, so they can't show how many documents exist. This covers
+    phrasings the detector doesn't catch.
 
 ## Before changing prompts or retrieval
 

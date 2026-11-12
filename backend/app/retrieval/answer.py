@@ -1,8 +1,9 @@
 """Question -> retrieve -> prompt -> cited answer (whole, or streamed as events).
 
-Context building (excerpts wrapped in <document> tags, with any literal
-</document> neutralised so file content can't break out of the data region)
-is adapted from rag-claude's ask_stream. Citations are numbered [n] ids that
+Context building (excerpts wrapped in <excerpt> tags, with any literal
+</excerpt> neutralised so file content can't break out of the data region)
+is adapted from rag-claude's ask_stream. The tag is not called <document>:
+the model then counted six excerpts as "6 documents indexed". Citations are numbered [n] ids that
 map back to the retrieved chunks.
 
 Two modes:
@@ -120,8 +121,8 @@ def build_context(hits: list[RetrievedChunk]) -> str:
             attrs += f' page="{hit.page}"'
         if hit.section:
             attrs += f' section="{html.escape(hit.section, quote=True)}"'
-        body = hit.text.replace("</document>", "<\\/document>")
-        parts.append(f"<document {attrs}>\n{body}\n</document>")
+        body = hit.text.replace("</excerpt>", "<\\/excerpt>")
+        parts.append(f"<excerpt {attrs}>\n{body}\n</excerpt>")
     return "\n\n".join(parts)
 
 

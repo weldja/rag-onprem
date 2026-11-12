@@ -10,6 +10,7 @@ from sqlalchemy import Engine
 from app.auth.acl import Viewer
 from app.core.config import Settings
 from app.retrieval.answer import Retriever
+from app.retrieval.library import LibraryStats, library_stats
 from app.retrieval.rerank import Reranker, rerank
 from app.retrieval.search import (
     RetrievedChunk,
@@ -30,6 +31,10 @@ class Search(Protocol):
 
     def names(self, document_ids: Sequence[int]) -> list[str]:
         """File names of the documents the viewer can see."""
+        ...
+
+    def library(self, document_ids: Sequence[int] | None = None) -> LibraryStats:
+        """Counts of the documents the viewer can see (within the scope, if any)."""
         ...
 
 
@@ -80,3 +85,6 @@ class DbSearch:
 
     def names(self, document_ids: Sequence[int]) -> list[str]:
         return document_names(self._engine, document_ids, viewer=self._viewer)
+
+    def library(self, document_ids: Sequence[int] | None = None) -> LibraryStats:
+        return library_stats(self._engine, self._viewer, document_ids)

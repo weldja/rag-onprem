@@ -2,6 +2,7 @@ from collections.abc import Iterator
 
 from app.llm.base import ChatMessage
 from app.llm.ollama import OllamaError
+from app.retrieval.library import LibraryStats
 from app.retrieval.search import RetrievedChunk
 
 
@@ -89,6 +90,14 @@ class FakeSearch:
     def names(self, document_ids):  # type: ignore[no-untyped-def]
         by_id = {h.document_id: h.filename for h in self.hits + self.spread_hits}
         return [by_id[i] for i in document_ids if i in by_id]
+
+    def library(self, document_ids=None):  # type: ignore[no-untyped-def]
+        self.scopes.append(("library", document_ids))
+        by_id = {h.document_id: h.filename for h in self.hits + self.spread_hits}
+        if document_ids:
+            by_id = {i: n for i, n in by_id.items() if i in document_ids}
+        names = sorted(by_id.values(), key=str.lower)
+        return LibraryStats(indexed=len(names), in_progress=0, failed=0, names=names)
 
 
 class FakeReranker:

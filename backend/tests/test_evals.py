@@ -34,8 +34,20 @@ def test_case_ids_are_unique_and_well_formed() -> None:
     ids = [c["id"] for c in CASES]
     assert len(ids) == len(set(ids))
     for c in CASES:
-        if c.get("expect_found", True):
+        if c.get("library"):  # answered from the database: no sources to expect
+            assert c["answer_any"] and "expect" not in c, c["id"]
+        elif c.get("expect_found", True):
             assert c["expect"] and c["answer_any"], c["id"]
+
+
+def test_library_cases_are_scored_on_their_own() -> None:
+    results = [
+        CaseResult("q", True, True, True, True, 1, 1, True, 1.0),
+        CaseResult("lib", True, True, answer_correct=True, seconds=0.1, library=True),
+    ]
+    m = summarise(results)
+    assert m["answerable_cases"] == 1 and m["retrieval_recall"] == 1.0
+    assert (m["library_cases"], m["library_accuracy"]) == (1, 1.0)
 
 
 def test_matching_and_summary() -> None:

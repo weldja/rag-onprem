@@ -12,6 +12,7 @@ from app.auth.acl import Viewer
 from app.core.config import Settings, get_settings
 from app.db.tables import chunks
 from app.ingestion import registry
+from app.retrieval.library import library_stats
 from app.retrieval.search import document_names, document_spread, hybrid_search
 
 pytestmark = [pytest.mark.db, pytest.mark.enable_socket]
@@ -138,6 +139,24 @@ def test_listing_and_opening_follow_the_same_rules(db: Engine, world: dict[str, 
         registry.visible_file(db, world["budget"], harry)
     with pytest.raises(registry.NotFoundError):
         registry.delete_document(db, world["budget"], harry)
+
+
+def test_collection_counts_follow_the_same_rules(db: Engine, world: dict[str, int]) -> None:
+    fiona = _viewer(db, world["fiona"])
+    stats = library_stats(db, fiona)
+    assert (stats.indexed, stats.names) == (2, ["budget.txt", "draft.txt"])
+    harry = library_stats(db, _viewer(db, world["harry"]))
+    assert (harry.indexed, harry.names) == (1, ["salaries.txt"])
+    assert library_stats(db, _viewer(db, world["admin"])).indexed == 3
+    # A scope narrows but never widens: HR's document stays invisible to Fiona.
+    scoped = library_stats(db, fiona, [world["budget"], world["salaries"]])
+    assert (scoped.indexed, scoped.names) == (1, ["budget.txt"])
+    with db.begin() as conn:
+        conn.exec_driver_sql(
+            "UPDATE documents SET status = 'failed' WHERE id = %s", (world["draft"],)
+        )
+    stats = library_stats(db, fiona)
+    assert (stats.indexed, stats.failed, stats.names) == (1, 1, ["budget.txt"])
 
 
 def test_only_uploader_or_admin_can_manage(db: Engine, world: dict[str, int]) -> None:

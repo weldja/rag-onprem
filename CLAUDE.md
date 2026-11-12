@@ -252,6 +252,11 @@ Milestone 4 (answer quality):
 - Summary mode: `mode: "summary"` + `document_ids` samples chunks evenly across the document.
   A typed "summarise this doc" with 1–5 documents in scope also runs as a summary
   (`answer.asks_for_summary`; the `generating` event then carries `summary: true`).
+- Questions about the collection itself ("how many docs are indexed", "which documents do you
+  have") are answered from the database without the LLM (`retrieval/library.py`, ACL + scope in
+  SQL). Detection allows only filler words, so content questions ("how many documents must I
+  submit?") still go to the model. Excerpts are wrapped in `<excerpt>` tags, not `<document>`.
+  The model once counted six `<document>` excerpts as "6 documents indexed".
 - Retrieval drops chunks whose text duplicates an already selected chunk.
 - Chunks are embedded as "document name - section" + text (`pipeline.embedding_text`); stored
   text, keyword search and prompts use the plain text. Changing that input means re-indexing.

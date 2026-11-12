@@ -82,6 +82,10 @@ Configuration lives in `.env`, which is readable only by its owner. After changi
   - Password-protected PDFs can't be read; PDFs that only restrict editing or printing can.
   - **Summaries:** click **Summary** next to a file, or limit the question to one file (up to
     five) in the sidebar and ask "summarise this".
+  - **Questions about the collection itself**, such as "how many documents are indexed?" or "which
+    documents do you have?", are answered from the database: only the documents the user can see,
+    within the sidebar's current scope. The model itself only ever reads a few excerpts and can't
+    count documents.
   - Scanned PDF pages and images are read with OCR on this server. Scanned documents take longer to
     index, roughly a few seconds per page. Clean scans at 300 dpi read best; photos of paper and
     handwriting may read poorly.

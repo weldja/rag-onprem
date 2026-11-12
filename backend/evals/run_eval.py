@@ -13,8 +13,10 @@ Metrics (answerable cases unless noted):
   abstention         unanswerable cases correctly answered "not found"
   summary_cited      summary cases ("summary_of") that cite the summarised document
   summary_accuracy   summary cases that contain every expected fact
-Summary cases are kept out of the question metrics above. A "typed" summary case
-sends the request as an ordinary question limited to the document.
+  library_accuracy   questions about the collection itself ("library": true),
+                     answered from the database, that contain every expected fact
+Summary and library cases are kept out of the question metrics above. A "typed"
+summary case sends the request as an ordinary question limited to the document.
 """
 
 import argparse
@@ -55,6 +57,7 @@ class CaseResult:
     cited_sources: list[str] = field(default_factory=list)
     retrieved_sources: list[str] = field(default_factory=list)  # [n] order, for diagnosis
     summary: bool = False
+    library: bool = False
 
 
 def _client(base: str) -> httpx.Client:
@@ -169,8 +172,15 @@ def run_case(
         cited_sources=[f"[{s['id']}] {_label(s)}" for s in body["sources"]],
         retrieved_sources=[f"[{s['id']}] {_label(s)}" for s in body.get("retrieved", [])],
         summary="summary_of" in case,
+        library=bool(case.get("library")),
     )
     version = body.get("prompt_version")
+    if result.library:
+        answer = body["answer"].lower()
+        result.answer_correct = body["found"] and all(
+            any(alt.lower() in answer for alt in group) for group in case["answer_any"]
+        )
+        return result, version
     if not answerable:
         return result, version
     expected = case["expect"]
@@ -187,9 +197,10 @@ def run_case(
 
 
 def summarise(results: list[CaseResult]) -> dict[str, float]:
-    ans = [r for r in results if r.answerable and not r.summary]
-    un = [r for r in results if not r.answerable]
+    ans = [r for r in results if r.answerable and not r.summary and not r.library]
+    un = [r for r in results if not r.answerable and not r.library]
     summ = [r for r in results if r.summary]
+    lib = [r for r in results if r.library]
 
     def rate(xs: list[bool]) -> float:
         return round(sum(xs) / len(xs), 3) if xs else 0.0
@@ -216,6 +227,8 @@ def summarise(results: list[CaseResult]) -> dict[str, float]:
         "summary_median_seconds": round(statistics.median(r.seconds for r in summ), 2)
         if summ
         else 0.0,
+        "library_cases": len(lib),
+        "library_accuracy": rate([r.answer_correct for r in lib]),
     }
 
 

@@ -25,14 +25,17 @@ from app.llm.base import ChatMessage, Embedder, LLMClient
 from app.llm.ollama import OllamaClient, OllamaError
 from app.llm.prompts import prompt_version
 from app.retrieval.answer import (
+    Answer,
     Mode,
     Request,
+    answer_dict,
     answer_events,
     answer_question,
     asks_for_summary,
     mentions_summary,
 )
 from app.retrieval.cache import AnswerCache
+from app.retrieval.library import library_answer, library_question
 from app.retrieval.service import Search
 
 log = logging.getLogger(__name__)
@@ -105,6 +108,19 @@ def _mode(body: AskRequest, search: Search) -> Mode:
     return "summary" if names and asks_for_summary(body.question, names) else body.mode
 
 
+def _library(body: AskRequest, search: Search) -> Answer | None:
+    """A question about the collection itself ("how many docs are indexed") is
+    answered from the database: the model only sees a few excerpts and can't
+    count documents."""
+    kind = library_question(body.question) if body.mode == "answer" else None
+    if kind is None:
+        return None
+    stats = search.library(body.document_ids)
+    log.info("library answer: indexed=%d", stats.indexed)
+    text = library_answer(stats, kind, scoped=bool(body.document_ids))
+    return Answer(text, found=True, sources=[])
+
+
 def _request(body: AskRequest, mode: Mode, settings: AppSettings) -> Request:
     history: list[ChatMessage] = [{"role": t.role, "content": t.content} for t in body.history]
     return Request(
@@ -163,6 +179,12 @@ def ask(
     settings: AppSettings,
 ) -> AskResponse:
     ids = body.document_ids
+    library = _library(body, search)
+    if library is not None:
+        debug_fields: dict[str, Any] = (
+            {"retrieved": [], "prompt_version": prompt_version()} if body.debug else {}
+        )
+        return AskResponse(answer=library.answer, found=True, sources=[], **debug_fields)
     mode = _mode(body, search)
     try:
         with answering():
@@ -210,6 +232,19 @@ def ask_stream(
 ) -> StreamingResponse:
     """Server-sent events; see app.retrieval.answer.answer_events for the protocol."""
     ids = body.document_ids
+    library = _library(body, search)
+    if library is not None:
+        events: Iterator[dict[str, Any]] = iter(
+            [
+                {"type": "token", "text": library.answer},
+                {"type": "done", **answer_dict(library, body.debug)},
+            ]
+        )
+        return StreamingResponse(
+            _sse(events, answering),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
     mode = _mode(body, search)
     events = answer_events(
         _request(body, mode, settings),

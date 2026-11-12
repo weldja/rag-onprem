@@ -1,5 +1,6 @@
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import replace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -120,6 +121,28 @@ def test_typed_summary_request_runs_as_summary(client: TestClient) -> None:
     client.post("/api/ask", json={"question": "Summarise the SSO section", "document_ids": [1]})
     client.post("/api/ask", json={"question": "summarise this doc"})
     assert search.scopes.count(("spread", [1])) == 3
+
+
+def test_questions_about_the_collection_are_answered_from_the_database(
+    client: TestClient,
+) -> None:
+    hits = [chunk(1, filename="b.pdf"), replace(chunk(2, filename="a.docx"), document_id=2)]
+    llm, search = override_with_search("There are 2 documents [1].", FakeSearch(hits))
+    body = client.post(
+        "/api/ask", json={"question": "How many docs are indexed?", "debug": True}
+    ).json()
+    assert body["answer"].startswith("**2 documents** are indexed")
+    assert body["found"] is True and body["sources"] == [] and body["retrieved"] == []
+    with client.stream(
+        "POST",
+        "/api/ask/stream",
+        json={"question": "Which documents do you have?", "document_ids": [2]},
+    ) as resp:
+        stream = "".join(resp.iter_text())
+    assert "event: done" in stream and "in the current scope" in stream
+    assert "- a.docx" in stream and "b.pdf" not in stream
+    assert search.scopes == [("library", None), ("library", [2])]
+    assert llm.messages == []  # the model was never asked
 
 
 def test_summary_mode_needs_documents(client: TestClient) -> None:
