@@ -15,7 +15,7 @@ class Settings(BaseSettings):
 
     # Local model runtime. Never a hosted endpoint.
     ollama_url: str = "http://ollama:11434"
-    llm_model: str = "qwen2.5:7b-instruct"
+    llm_model: str = "qwen3:4b-instruct-2507-q4_K_M"
     embed_model: str = "bge-m3"
     embed_dim: int = Field(default=1024, gt=0, le=2000)  # HNSW limit is 2000
     # GPU layers for the embedding model. Empty = Ollama decides. 0 = CPU only:

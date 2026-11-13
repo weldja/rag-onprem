@@ -46,6 +46,9 @@ services:
     image: rag-onprem/ollama:${RAG_VERSION}
     pull_policy: never
     environment:
+      # The model to warm up at start: the one chosen in .env, not the image's
+      # default, or both would stay loaded (OLLAMA_KEEP_ALIVE -1).
+      LLM_MODEL: ${LLM_MODEL}
       OLLAMA_KEEP_ALIVE: "-1"
       OLLAMA_CONTEXT_LENGTH: ${LLM_NUM_CTX:-8192}
       OLLAMA_NO_CLOUD: "1"

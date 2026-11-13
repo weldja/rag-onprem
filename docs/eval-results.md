@@ -47,6 +47,14 @@ The eval user sees only the eval corpus.
 | Qwen3 4B, main on 2026-11-12 (baseline for the next row) | `277b9220b4` | 1.000 | 1.000 | 0.963 | 1.000 | 0 | 1.0 | 4.9 |
 | **Qwen3 4B, `<excerpt>` tags + collection rule (2026-11-12)** | `89d969a6d5` | **1.000** | **1.000** | 0.929 | **1.000** | **0** | **1.0** | **4.9** |
 | **7B, `<excerpt>` tags + collection rule, small-GPU settings†** | `89d969a6d5` | **1.000** | **1.000** | **1.000** | **1.000** | **0** | **1.0** | 11.4 |
+| Qwen3 4B, laptop install, `OLLAMA_KV_CACHE_TYPE=q8_0`, streamed (2026-11-13)‡ | `89d969a6d5` | 1.000 | 1.000 | 0.929 | 1.000 | 0 | 1.0 | 4.9 (first word 3.7) |
+
+‡ Asked over `/api/ask/stream` as the UI does, so the run also records time to the first word
+(`first_word_seconds`, `median_first_word_seconds`). Identical to the 2026-11-12 row on every
+metric; summaries 4/4 accurate, 3/4 cited, median 16 s. The dev `.env` already had q8_0 then,
+so this mostly confirms that the earlier runs used it. The eval corpus has short chunks
+(~200 characters), so its prompts are small: 3–5 s to the first word. The real documents show
+the actual latency (see "Real documents").
 
 Summary cases (`summary_of` in `cases.json`, added 2026-11-08): Qwen3 4B cited and accurate 2/2,
 median 22 s. In an earlier hand check one of its two summaries was accurate but uncited, so summary
@@ -190,12 +198,106 @@ model already loaded, `num_ctx` 8192:
 - Not yet measured: the 7B entirely on an 8 GB+ GPU. Measure it on the first customer-class GPU
   and record it here, for both a question and a summary.
 
+## GPU memory budget (2026-11-13, estimates)
+
+Since 2026-11-13 every install uses Qwen3 4B, and `install.sh` picks the memory settings from
+the card size. The 4 GB row is measured; the other rows are **estimates**, built from:
+- `ollama ps` on the laptop: 4B at 2.9 GB with `num_ctx` 4096 and q8_0; bge-m3 1.2 GB
+- the models' context memory per token:
+  - Qwen3 4B: 36 layers × 8 KV heads × 128 → 144 KiB f16, 76.5 KiB q8_0
+  - Qwen2.5 7B: 28 layers × 4 KV heads × 128 → 56 KiB f16
+- weights: 4B ≈ 2.6 GB with compute buffers; 7B ≈ 4.4 GB + ~0.4 GB buffers
+- reserves: Ollama's 512 MiB margin (`LLAMA_ARG_FIT_TARGET`) plus ~300 MiB CUDA context
+
+Check each tier with the operations.md checklist on the first real card.
+
+| Card (usable) | Settings | 4B + context | bge-m3 | Total | Spare |
+|---|---|---|---|---|---|
+| 4 GB (~3.2 GB) | ctx 4096, q8_0, bge-m3 on CPU | 2.9 GB (measured) | CPU | 2.9 GB | ~0.3 GB |
+| 6 GB (~5.1 GB) | ctx 8192, q8_0 | 2.6 + 0.6 = 3.2 GB | 1.2 GB | 4.4 GB | ~0.7 GB |
+| 6 GB, if f16 | ctx 8192, f16 | 2.6 + 1.15 = 3.75 GB | 1.2 GB | 4.95 GB | ~0.15 GB: too tight, hence q8_0 |
+| 8 GB (~7.1 GB) | ctx 8192, f16 (defaults) | 3.75 GB | 1.2 GB | 4.95 GB | ~2.1 GB |
+| 8 GB, 7B option | ctx 8192, f16 | 4.8 + 0.45 = 5.25 GB | 1.2 GB | 6.45 GB | ~0.65 GB: tight, so `EMBED_NUM_GPU=0` is recommended |
+| 12 GB+, 7B option | ctx 8192, f16 | 5.25 GB | 1.2 GB | 6.45 GB | 4 GB+ |
+
+**A larger `LLM_NUM_CTX` doesn't help with the current settings.** A question uses ~1,500–2,000
+prompt tokens plus up to 1,024 answer tokens, and a 6-excerpt summary about the same, so 8192
+already leaves room. The context only needs to grow if `SUMMARY_CHUNKS` is raised for fuller
+summaries, and every extra excerpt adds ~0.7–2 s before the first word on a slow card.
+Suggested for a 12 GB+ card, if customers want longer summaries: `LLM_NUM_CTX=16384` (+1.15 GB
+f16) with `SUMMARY_CHUNKS=10`. Not a default: it would break the 10-second target on
+summaries for smaller cards.
+
 ## Real documents (2026-11-09, laptop install, Qwen3 4B, 14 documents)
 
 40 hand-written cases against the customer-style documents on the laptop install, asked as a
 non-admin user (cases and answers kept out of the repo; they quote those documents):
 retrieval recall 1.0, citation recall 0.971, citation precision 0.947, answer accuracy 0.971,
 abstention 1.0 (4/4), follow-up 1/1, summaries 1/2. Median 14 s per question.
+
+**Re-run 2026-11-13** (q8_0 KV cache, streamed, 15 documents after `ENC_User_Manual.pdf`
+finished indexing, same cases plus two typed summaries; 34 answerable, 4 unanswerable, 4 summaries):
+
+| Metric | 2026-11-09 | 2026-11-13 |
+|---|---|---|
+| Retrieval recall (document level) | 1.0 | 1.0 |
+| Citation recall | 0.971 | 0.941 |
+| Citation precision | 0.947 | 1.000 |
+| Answer accuracy | 0.971 | 0.941 |
+| Abstention | 1.0 | 1.0 |
+| Summaries accurate | 1/2 | 4/4 |
+| Median first word / total, questions | – / 14 s | **10.1 s** / 13.9 s |
+| Median first word / total, summaries | – | 7.5 s / 33 s |
+
+- The two misses are retrieval, not the KV cache. `cr-priority` is the form-style DOCX problem
+  below. `rn-xfp` passed on 11-09 from page 116. Since the PDF re-index (pypdfium2, document name
+  in the embedding input), six near-identical transceiver descriptions (pp. 117–128) outrank it.
+  The chunk is intact: "XFP/10G/850I/MM/LC … operating at a wavelength of 850 nm".
+- This set's retrieval recall only checks the document, not the page, so it hides misses like
+  `rn-xfp`.
+- First word on answered questions: 10.3 s median, range 6.9–18.0 s. The slowest are the
+  technical PDFs, whose excerpts are full 1,000-character chunks.
+
+## Single answer model, release 1.0.0-rc7 (2026-11-13, laptop install, q8_0)
+
+From rc7, Qwen3 4B is the default on every install. The 7B ships in the same bundle as an option
+(see "GPU memory budget"). The laptop install was upgraded from 1.0.0-rc6.small. Its `.env` kept
+the small-card settings (ctx 4096, 768 tokens, `EMBED_NUM_GPU=0`, `OLLAMA_KV_CACHE_TYPE=q8_0`).
+
+- **Placement:** `ollama ps` shows `qwen3:4b-instruct-2507-q4_K_M` at 100% GPU (2.9 GB) and
+  `bge-m3` at 100% CPU. That's as intended for a card under 6 GB.
+- **Model IDs** in the rc7 ollama image:
+  - `qwen3:4b-instruct-2507-q4_K_M` `0edcdef34593`
+  - `qwen2.5:7b-instruct` `845dbda0ea48`
+  - `bge-m3` `790764642607`
+- **Image sizes:** the ollama image is 11.9 GB and the bundle 12 GB.
+
+**This is the q8_0 KV-cache result.** Both earlier small-GPU runs most likely already used q8_0,
+and the numbers match them:
+
+| Metric | Eval corpus (34) | Real documents (42) |
+|---|---|---|
+| Retrieval recall | 1.000 | 1.000 (document level) |
+| Citation recall | 1.000 | 0.941 |
+| Citation precision | 0.929 | 1.000 |
+| Answer accuracy | 1.000 | 0.941 |
+| False not-found | 0 | 0.059 (`cr-priority`, `rn-xfp`; see above) |
+| Abstention | 1.0 | 1.0 |
+| Summaries accurate / cited | 4/4, 3/4 | 4/4\*, 4/4 |
+| Collection questions | 2/2 | – |
+| Median first word, questions | 3.6 s | 9.7 s (answered only: 10.3 s, range 6.7–16.7 s; 15 of 32 under 10 s) |
+| Median total, questions | 4.7 s | 13.6 s |
+| Median first word / total, summaries | – / 16.2 s | 7.4 s / 34.7 s |
+
+\* `sum-cp-typed` wrote "a 5-working-day acknowledgement". It was scored as missing "5 working
+days", so the case now accepts the hyphenated form.
+
+**One CUDA error during the first run:** at 10:47, llama-server aborted on a matrix multiply
+(`CUDA error: unknown error`). Windows logged no driver event. Ollama restarted the runner without
+restarting the container, but the eval in progress failed and the next two answers waited 36–67 s
+for the reload. A clean rerun produced the numbers above, with no further errors in ~80 questions.
+The error was not seen before on this card. If it recurs, look at the WSL2/NVIDIA driver before
+the model settings.
 
 - **Summary of a short document skipped a section (fixed).** Complaints_Procedure.docx is 7
   small chunks; sampling 6 dropped the one with the response deadlines. A document that fits in

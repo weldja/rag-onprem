@@ -49,8 +49,8 @@ fi
 
 mem_gb="$(awk '/MemTotal/ {printf "%d", $2/1024/1024}' /proc/meminfo 2>/dev/null || echo 0)"
 if [ "$mem_gb" -ge 16 ]; then ok "${mem_gb} GB RAM"
-elif [ "$mem_gb" -ge 12 ]; then warn "${mem_gb} GB RAM: enough for the default 7B model, with little headroom (16+ recommended)"
-else fail "${mem_gb} GB RAM: at least 12 GB required for the default 7B model"; problems=$((problems + 1)); fi
+elif [ "$mem_gb" -ge 12 ]; then warn "${mem_gb} GB RAM: enough, with little headroom (16+ recommended)"
+else fail "${mem_gb} GB RAM: at least 12 GB required"; problems=$((problems + 1)); fi
 
 # --- Disk -------------------------------------------------------------------
 root="$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || echo /var/lib/docker)"
@@ -59,6 +59,7 @@ root="$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || echo /var/lib/d
 free_gb="$( (df -Pk "$root" 2>/dev/null || true) | awk 'NR==2 {printf "%d", $4/1024/1024}')"
 [ -n "$free_gb" ] || free_gb="$( (df -Pk . 2>/dev/null || true) | awk 'NR==2 {printf "%d", $4/1024/1024}')"
 free_gb="${free_gb:-0}"
+# The images take about 14 GB once loaded (both answer models; 1.0.0-rc7).
 if [ "$free_gb" -ge 40 ]; then ok "${free_gb} GB free for Docker"
 elif [ "$free_gb" -ge 25 ]; then warn "${free_gb} GB free for Docker: enough to install, little room for documents (40+ recommended)"
 else fail "${free_gb} GB free for Docker: at least 25 GB required"; problems=$((problems + 1)); fi
@@ -82,18 +83,20 @@ for port in "$http_port" "$https_port"; do
 done
 
 # --- GPU --------------------------------------------------------------------
-# Answers within 10 seconds need the whole model in GPU memory: an NVIDIA GPU
-# with 8 GB+. Anything less still works, just slowly, so these are warnings.
-fast_gpu="an NVIDIA GPU with 8 GB+ is needed for answers within 10 seconds"
+# Answers within 10 seconds need the whole model in GPU memory. The default
+# model fits a 4 GB card (first words in about 10 seconds there); 8 GB+ holds
+# both models with room to spare. Anything less still works, just slowly, so
+# these are warnings.
+fast_gpu="an NVIDIA GPU with 8 GB+ is recommended for answers within 10 seconds"
 gpu=0
 if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
     if docker info 2>/dev/null | grep -qi 'nvidia'; then
         ok "NVIDIA GPU with container runtime: $(nvidia-smi -L | head -1)"
         gpu=1
         vram_mb="$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -dc 0-9 || true)"
-        # 7500, not 8192: 8 GB cards report slightly less than 8192 MiB.
-        if [ -n "$vram_mb" ] && [ "$vram_mb" -lt 7500 ]; then
-            warn "GPU has only $((vram_mb / 1024)) GB of memory: part of the model runs on the CPU (questions about 10 seconds, summaries about 35 seconds on a 4 GB card; install.sh applies small-GPU settings)"
+        # 6000: below it the embedding model has to run on the CPU (install.sh).
+        if [ -n "$vram_mb" ] && [ "$vram_mb" -lt 6000 ]; then
+            warn "GPU has only $((vram_mb / 1024)) GB of memory: install.sh applies small-card settings (first words in about 10 seconds, summaries about 30 seconds on a 4 GB card; 8 GB+ recommended)"
         fi
     else
         warn "NVIDIA GPU found but the NVIDIA Container Toolkit isn't configured for Docker; using CPU, so answers take 20-60 seconds or more ($fast_gpu)"

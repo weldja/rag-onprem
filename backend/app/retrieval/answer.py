@@ -23,7 +23,7 @@ from typing import Any, Literal
 
 from app.llm.base import ChatMessage, Embedder, LLMClient
 from app.llm.ollama import OllamaError
-from app.llm.prompts import NOT_FOUND_ANSWER, is_not_found_answer, load_prompt
+from app.llm.prompts import NOT_FOUND_ANSWER, is_not_found_answer, load_prompt, prompt_version
 from app.retrieval.cache import AnswerCache
 from app.retrieval.search import RetrievedChunk
 
@@ -389,4 +389,5 @@ def answer_dict(answer: Answer, debug: bool = False) -> dict[str, Any]:
     }
     if debug:
         out["retrieved"] = [asdict(s) for s in answer.retrieved]
+        out["prompt_version"] = prompt_version()
     return out

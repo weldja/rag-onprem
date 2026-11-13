@@ -37,7 +37,7 @@ into an offline bundle). It is **never** allowed at container start or at reques
 | Concern | Choice | Why / notes |
 |---|---|---|
 | LLM runtime | **Ollama** (own container) | Simple to run, GPU or CPU, handles GGUF quantisation, local HTTP API. vLLM is the upgrade path for customers with larger GPUs. |
-| LLM model | **`qwen2.5:7b-instruct`** (standard bundle), **`qwen3:4b-instruct-2507-q4_K_M`** (small-GPU bundle) | See *Models* below. Model name is config, not code. |
+| LLM model | **`qwen3:4b-instruct-2507-q4_K_M`** on every install; `qwen2.5:7b-instruct` optional (in the bundle, selected by `LLM_MODEL`) | See *Models* below. Model name is config, not code. |
 | Embeddings | **`bge-m3`** (1024-dim) served by Ollama | Multilingual, good retrieval quality. One model runtime for both LLM and embeddings. See *Models* before changing it. |
 | Reranker (optional) | fastembed ONNX cross-encoder `Xenova/ms-marco-MiniLM-L-6-v2` inside the API container | Weights built into the image. Off by default (see `docs/eval-results.md`). Chosen over sentence-transformers to avoid pulling PyTorch (about 1 GB) into the image. |
 | Vector store + DB | **PostgreSQL 16 + pgvector** | One stateful service holds documents, chunks, vectors, users, ACLs and job queue. Gives hybrid search (pgvector + `tsvector` full-text) and a single backup target. Qdrant is the alternative if vector scale outgrows Postgres. |
@@ -119,15 +119,20 @@ Apply these whenever you add the matching component:
   `.env.example` committed and `.env` git-ignored.
 - Model names, embedding dimension, chunk sizes, top-k, and the Ollama URL are configuration, never hard-coded.
 - Defaults must work for a CPU-only server. GPU is an opt-in compose profile (`--profile gpu`).
-- **Response-time target: answers within 10 seconds.** That needs the whole 7B model on an NVIDIA
-  GPU with 8 GB+ (decided 2026-11-08; measurements in `docs/eval-results.md`, "Latency"). CPU and
-  smaller GPUs still work, slowly; preflight warns about them.
-  - Open question: whether "10 seconds" means first words or the complete answer.
-  - Not yet measured: the 7B entirely on an 8 GB+ GPU. Measure it on the first customer-class GPU.
+- **Response-time target: first words of an answer within 10 seconds** (decided 2026-11-13). One
+  answer model everywhere, Qwen3 4B; an NVIDIA GPU with 8 GB+ is recommended. On the 4 GB laptop
+  it's ~10 s to the first word on real documents. CPU works, slowly; preflight warns.
+  - Not yet measured: anything on an 8 GB+ GPU. Use the checklist in `docs/operations.md`
+    ("Checking a new GPU server") on the first customer-class GPU.
+- **Hardware limits follow GPU memory, not the model** (`install.sh`, new `.env` only):
+  - under 6 GB: `LLM_NUM_CTX=4096`, `LLM_MAX_TOKENS=768`, `EMBED_NUM_GPU=0`,
+    `OLLAMA_KV_CACHE_TYPE=q8_0`
+  - 6–8 GB: `q8_0` only
+  - 8 GB+ and CPU: the defaults
+  - The 6 and 8 GB tiers are estimates (`docs/eval-results.md`, "GPU memory budget").
 - **On a GPU that can't hold both models, keep the embedding model on the CPU (`EMBED_NUM_GPU=0`)**,
-  or Ollama swaps the LLM out on every question. `install.sh` sets it on cards under 6 GB, along
-  with `LLM_NUM_CTX=4096`, `LLM_MAX_TOKENS=768` and `OLLAMA_KV_CACHE_TYPE=q8_0`. Check placement
-  with `ollama ps` and timings with the api's "answer timing" log line.
+  or Ollama swaps the LLM out on every question. Check placement with `ollama ps` and timings with
+  the api's "answer timing" log line.
 - The api loads both models at start-up (`OllamaClient.load_models`, LLM first or Ollama unloads
   bge-m3), and llama-server's host prompt cache is off (`LLAMA_ARG_CACHE_RAM=0`): saving it cost
   0.1–5 s per question on the laptop.
@@ -136,8 +141,8 @@ Apply these whenever you add the matching component:
 
 | Role | Model (exact Ollama tag) | Licence | Status |
 |---|---|---|---|
-| LLM, standard bundle (8 GB+ GPU) | `qwen2.5:7b-instruct` | Apache 2.0 | Customer default (`.env.example`) |
-| LLM, small-GPU bundle (< 8 GB) | `qwen3:4b-instruct-2507-q4_K_M` | Apache 2.0 | Shipped; matched the 7B on every eval metric, ~5 s per question |
+| LLM, default on every install | `qwen3:4b-instruct-2507-q4_K_M` | Apache 2.0 | Customer default (`.env.example`); matched the 7B on the evals at about twice the speed |
+| LLM, optional | `qwen2.5:7b-instruct` | Apache 2.0 | Built into the bundle (`LLM_EXTRA_MODELS`); a customer selects it with `LLM_MODEL` in `.env`, no rebuild. Needs 8 GB+ |
 | Embeddings | `bge-m3` | MIT | Fixed (1024-dim, schema is `vector(1024)`) |
 | Reranker (off by default) | `Xenova/ms-marco-MiniLM-L-6-v2` | Apache 2.0 | Optional, `RERANKER_MODEL` |
 | CI only | `qwen2.5:0.5b-instruct` | Apache 2.0 | Egress check and e2e smoke test. Never use it to judge quality |
@@ -146,6 +151,8 @@ Rejected (don't propose these again without new evidence):
 - `qwen2.5:3b-instruct`: its licence doesn't allow commercial use. The prompt was originally tuned on it.
 - `phi4-mini`: faster, but left answers uncited and answered a question the documents don't cover
   (citation recall 0.917, abstention 0.75).
+- `qwen3.5:4b` (vision and thinking, 3.3–4.0 GB): doesn't fit the 4 GB card. Deferred, not
+  rejected; see the backlog in `docs/build-plan.md`.
 
 Rules:
 - **Licence first.** Prefer Apache 2.0 or MIT; anything else needs the user's sign-off before it ships.
@@ -155,7 +162,8 @@ Rules:
   models that emit `<think>` blocks, which ruins latency and answer formatting.
 - **Speed vs quality.** A smaller or faster model is acceptable only if it matches the current model
   on the full eval (`bash scripts/eval.sh`), including the summary cases. Qwen3 4B passed; phi4-mini didn't.
-- **Any model change, and any prompt change, runs the eval against both shipped LLMs** (7B and Qwen3 4B).
+- **Any model change, and any prompt change, runs the eval against both shipped LLMs** (Qwen3 4B,
+  the default, and the optional 7B).
 - **Changing the embedding model is a migration, not a config edit:** `EMBED_DIM` is baked into the
   `vector(1024)` column, and every document must be re-indexed. Vectors from different models must never mix.
 - Models are pulled into the ollama image at build time by tag (`deploy/ollama/Dockerfile`). Tags can be
@@ -195,13 +203,14 @@ bash scripts/e2e.sh                     # DB tests + ingest sample + HTTPS end-t
 bash scripts/make-dev-cert.sh           # self-signed cert for dev (dev-up.sh runs it if missing)
 bash scripts/eval.sh --detach --label X # answer-quality eval (~15 min), JSON report in eval-results/
 bash scripts/retrieval-probe.sh         # what each eval question retrieves, with scores; no LLM
-bash scripts/build-release.sh 1.0.0     # offline bundle in release/ (customer default models from .env.example)
-RELEASE_LLM_MODEL=qwen3:4b-instruct-2507-q4_K_M bash scripts/build-release.sh 1.0.0-small   # small-GPU bundle (< 8 GB)
+bash scripts/build-release.sh 1.0.0     # offline bundle in release/: one bundle for every server (4B default + optional 7B, from .env.example)
 bash scripts/egress-check.sh            # api/ollama/db must NOT reach the internet
 ```
 
 - Models are baked into the ollama image at build time (`deploy/ollama/Dockerfile`). Changing
-  `LLM_MODEL`/`EMBED_MODEL` in `.env` needs `docker compose build ollama`.
+  `LLM_MODEL`/`EMBED_MODEL` in `.env` needs `docker compose build ollama`. The dev image holds only
+  `LLM_MODEL`; set `DEV_LLM_EXTRA_MODELS=qwen2.5:7b-instruct` to also bake in the 7B, as the
+  release bundle does (`LLM_EXTRA_MODELS`).
 - Migrations run automatically on api start (`backend/docker-entrypoint.sh`).
 - Update `backend/uv.lock` with:
   `docker run --rm -v "$(pwd -W)/backend:/app" -w /app ghcr.io/astral-sh/uv:0.8.4-python3.12-bookworm-slim uv lock`
@@ -295,7 +304,7 @@ Milestone 5 (shipping):
   - api and worker read `.env` via `env_file`, so `LDAP_*` doesn't need listing in compose.
     Single-quote values containing shell metacharacters.
 - Dev GPU: `DEV_GPU=1` in `.env` adds `deploy/docker-compose.gpu.yml` (NVIDIA) to the dev stack. With
-  it, the 7B customer model runs on a 4 GB laptop GPU, partly offloaded (see `docs/eval-results.md`).
+  it, the 4B runs fully on the 4 GB laptop GPU (the 7B only partly; see `docs/eval-results.md`).
 - Release testing: install the bundle under `COMPOSE_PROJECT_NAME=<other>` with other ports. The
   release compose file is also named `rag-onprem` and would otherwise reuse the dev volumes.
 - Shell pitfalls already hit: `tr </dev/urandom | head` under `pipefail` needs `|| true` (SIGPIPE);

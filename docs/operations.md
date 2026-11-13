@@ -17,18 +17,32 @@ Run all commands from the bundle folder, as a user allowed to run Docker.
 | GPU | none | **NVIDIA with 8 GB+ VRAM** and the NVIDIA Container Toolkit |
 | Network | ports 80 and 443 reachable from staff PCs | a DNS name and a certificate for it |
 
-**Response time depends on the GPU.** The model must fit entirely in GPU memory to answer quickly:
+**Response time depends on the GPU.** The answer model (Qwen3 4B) must fit entirely in GPU
+memory to answer quickly. The installer sets the memory-related settings from the card's size
+(only when it creates `.env`):
 
-- **NVIDIA GPU with 8 GB+:** the whole model runs on the GPU. This is the configuration for
-  answers within 10 seconds.
-- **Smaller GPU (e.g. 4 GB):** ask for the **small-GPU bundle**, which uses a smaller model
-  (Qwen3 4B) that fits the card. Measured on a 4 GB card: questions about 5 seconds, document
-  summaries about 22 seconds, with the same answer quality in our evaluation. The standard bundle
-  also works on such a card (questions about 10 seconds, summaries about 35 seconds). Either way
-  the installer applies small-GPU settings (`LLM_NUM_CTX=4096`, `LLM_MAX_TOKENS=768`,
-  `EMBED_NUM_GPU=0`, `OLLAMA_KV_CACHE_TYPE=q8_0`). The `VERSION` file shows which model a bundle
-  contains (`llm_model`).
+| GPU memory | Settings applied | Where the models run |
+|---|---|---|
+| 8 GB+ | defaults (`LLM_NUM_CTX=8192`, `LLM_MAX_TOKENS=1024`) | both on the GPU, with room to spare |
+| 6–8 GB | `OLLAMA_KV_CACHE_TYPE=q8_0` | both on the GPU |
+| under 6 GB (e.g. 4 GB) | `LLM_NUM_CTX=4096`, `LLM_MAX_TOKENS=768`, `EMBED_NUM_GPU=0`, `OLLAMA_KV_CACHE_TYPE=q8_0` | answer model on the GPU, search model on the CPU |
+| no GPU | defaults | both on the CPU |
+
+- **NVIDIA GPU with 8 GB+:** recommended. Answers start within 10 seconds.
+- **4 GB GPU:** measured on a 4 GB NVIDIA T500 with real company documents: first words after
+  about 10 seconds, complete answers about 14 seconds, document summaries about 30 seconds.
 - **No GPU:** questions take 20–60 seconds or more, and summaries several minutes.
+
+Check a new server with the checklist in **Checking a new GPU server** below.
+
+**More precise answers (optional): the 7B model.** The bundle also contains
+`qwen2.5:7b-instruct` (the `VERSION` file lists every answer model as `llm_models`). In our
+evaluation it cited slightly more precisely and answered as accurately, but took about twice as
+long. It needs an NVIDIA GPU with 8 GB+; on an 8 GB card also set `EMBED_NUM_GPU=0`, so the
+search model doesn't compete with it for card memory (12 GB+ holds both). To switch, set
+`LLM_MODEL=qwen2.5:7b-instruct` in `.env` and run `docker compose up -d`. Nothing is rebuilt or
+downloaded, documents don't need re-indexing, and upgrades keep the choice. Switch back the same
+way with `LLM_MODEL=qwen3:4b-instruct-2507-q4_K_M`.
 
 Answers stream as they're written, so the first words appear before the answer is complete.
 While a question is being answered, the page shows what's happening ("Searching your documents",
@@ -64,14 +78,39 @@ Configuration lives in `.env`, which is readable only by its owner. After changi
 | `HTTP_BIND`, `HTTP_PORT`, `HTTPS_PORT` | where the web interface listens |
 | `MIN_SIMILARITY`, `TOP_K`, `CHUNK_SIZE`, `CHUNK_OVERLAP` | retrieval tuning (defaults were chosen by evaluation) |
 | `LLM_MAX_TOKENS`, `SUMMARY_CHUNKS` | longest answer in tokens (default 1024) and excerpts a document summary reads (default 6). Higher values give fuller answers and summaries but take longer. |
-| `EMBED_NUM_GPU`, `LLM_NUM_CTX`, `OLLAMA_KV_CACHE_TYPE` | `0` keeps the search model on the CPU so it never displaces the answer model on a small GPU; context window of the answer model; `q8_0` halves the model's working memory so it fits a small card. Set automatically on a GPU under 6 GB. |
+| `EMBED_NUM_GPU`, `LLM_NUM_CTX`, `OLLAMA_KV_CACHE_TYPE` | `0` keeps the search model on the CPU so it never displaces the answer model on a small GPU; context window of the answer model; `q8_0` halves the model's working memory so it fits a small card. Set from the GPU's memory by the installer (see **Requirements**). |
 | `SHARE_1_PATH` ... `SHARE_3_PATH` and related | file shares indexed in place; see **File shares** below. |
 | `ANSWER_CACHE_ENTRIES` | answers kept in memory for repeated questions (default 500; `0` turns it off). |
 | `INDEX_PAUSE_MAX_S` | longest indexing waits (per excerpt) while answers are being written (default 120). |
 | `EMBED_BATCH` | excerpts per embedding request while indexing (default 1, so questions never queue behind a batch). |
 | `LLAMA_ARG_CACHE_RAM` | the model service's prompt cache in server memory, in MiB (default `0`, off: on small machines saving it slowed every question by up to 5 s). Try `8192` on a large server where many users ask about the same documents. The api loads both models when it starts, so the first question doesn't wait for them. |
 | `PASSWORD_MIN_LENGTH` | minimum length of local passwords (default 12, lowest 1). Any characters are allowed, including spaces. Lowering it makes passwords easier to guess. |
-| `LLM_MODEL`, `EMBED_MODEL`, `RAG_VERSION` | set by the bundle. Don't change them; the models are built into the images. |
+| `LLM_MODEL` | the answer model: `qwen3:4b-instruct-2507-q4_K_M` (default) or another model listed in `LLM_EXTRA_MODELS` (see **Requirements**). |
+| `LLM_EXTRA_MODELS`, `EMBED_MODEL`, `RAG_VERSION` | set by the bundle. Don't change them; the models are built into the images. |
+
+### Checking a new GPU server
+
+Do this once after installing on a server with an NVIDIA GPU of 8 GB or more, with a few documents
+indexed.
+
+1. **Both models on the GPU while answering.** Ask a question in the browser, then run
+   `docker compose exec ollama ollama ps`. Both lines (`qwen3:4b-instruct-2507-q4_K_M` and
+   `bge-m3`) should show `100% GPU` in the PROCESSOR column. On a card under 6 GB, `bge-m3`
+   shows `100% CPU` by design.
+2. **Both models stay on the GPU while indexing.** Upload a large document (or press **Scan now**
+   on a share). While the Indexing page shows progress, ask a question and run `ollama ps` again.
+   Both models must still be listed with `100% GPU`. If one is missing or shows a CPU/GPU split,
+   the card can't hold both: set `EMBED_NUM_GPU=0` (or `OLLAMA_KV_CACHE_TYPE=q8_0`) in `.env` and
+   run `docker compose up -d`.
+3. **First words within 10 seconds.** Ask five questions about your documents, then run
+   `docker compose logs api | grep "answer timing"`. `first_word` should be under `10000ms` on
+   each line. A repeated question is answered from memory (`cached=True`), so it doesn't count.
+4. **Note the results** (card model and memory, `ollama ps` output, `first_word` times) with your
+   installation records. They help when comparing after an upgrade.
+
+If step 1 fails on an 8 GB+ card, raise `LLAMA_ARG_FIT_TARGET` only if the ollama log shows
+out-of-memory errors. A CPU/GPU split usually means another program is using the card:
+`nvidia-smi` lists them.
 
 ## 3. Daily use
 

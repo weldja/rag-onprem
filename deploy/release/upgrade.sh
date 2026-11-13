@@ -49,9 +49,21 @@ while IFS= read -r line; do
 done <.env.example
 set_env RAG_VERSION "$new_version"
 # The models are baked into the images, so they follow the bundle.
-for key in LLM_MODEL EMBED_MODEL EMBED_DIM RERANKER_MODEL OCR_IMAGE_LANGUAGES; do
+for key in LLM_EXTRA_MODELS EMBED_MODEL EMBED_DIM RERANKER_MODEL OCR_IMAGE_LANGUAGES; do
     set_env "$key" "$(sed -n "s/^${key}=//p" .env.example)"
 done
+# The answer model: keep the administrator's choice while the new bundle still
+# contains it (LLM_MODEL or one of LLM_EXTRA_MODELS), else use the default.
+llm_now="$(sed -n 's/^LLM_MODEL=//p' .env)"
+llm_default="$(sed -n 's/^LLM_MODEL=//p' .env.example)"
+llm_all=",${llm_default},$(sed -n 's/^LLM_EXTRA_MODELS=//p' .env.example),"
+case "$llm_all" in
+    *",${llm_now},"*) ok "answer model: ${llm_now}" ;;
+    *)
+        set_env LLM_MODEL "$llm_default"
+        warn "answer model ${llm_now:-(none)} is not in this bundle: switched to ${llm_default}"
+        ;;
+esac
 
 old_version="$RAG_VERSION"
 # load_env exported the OLD values, and Compose prefers the environment over
