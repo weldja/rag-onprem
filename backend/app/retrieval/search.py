@@ -8,7 +8,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import Engine, func, literal_column, select, text
+from sqlalchemy import Engine, case, func, literal_column, select, text
 
 from app.auth.acl import Viewer, can_see
 from app.db.tables import chunks, documents
@@ -35,6 +35,16 @@ def to_or_tsquery(question: str, max_terms: int = 40) -> str | None:
         if len(tok) > 1 and tok not in tokens:
             tokens.append(tok)
     return " | ".join(tokens[:max_terms]) or None
+
+
+def _coverage(tsquery: str) -> Any:
+    """SQL: how many of the OR-ed query terms a chunk contains. Stop words
+    become empty queries and count for nothing."""
+    total: Any = literal_column("0")
+    for term in tsquery.split(" | "):
+        hit = chunks.c.tsv.bool_op("@@")(func.to_tsquery(literal_column("'english'"), term))
+        total = total + case((hit, 1), else_=0)
+    return total
 
 
 def rrf_merge(
@@ -128,6 +138,36 @@ def hybrid_search(
 ) -> list[RetrievedChunk]:
     """Relevant chunks, best first, limited to what `viewer` may see (and to
     `document_ids` when given). [] when the question is off-topic."""
+    vector_hits, keyword_hits = search_legs(
+        engine,
+        question,
+        query_vector,
+        viewer=viewer,
+        embed_model=embed_model,
+        candidates=candidates,
+        document_ids=document_ids,
+    )
+    return select_hits(
+        vector_hits,
+        keyword_hits,
+        k=k,
+        min_similarity=min_similarity,
+        keyword_keep=keyword_keep,
+    )
+
+
+def search_legs(
+    engine: Engine,
+    question: str,
+    query_vector: list[float],
+    *,
+    viewer: Viewer,
+    embed_model: str,
+    candidates: int,
+    document_ids: Sequence[int] | None = None,
+) -> tuple[list[RetrievedChunk], list[RetrievedChunk]]:
+    """Both retrieval legs before fusion: (by cosine similarity, by keywords),
+    each best first."""
     distance = chunks.c.embedding.cosine_distance(query_vector)
     similarity = (1 - distance).label("score")
     # Access control lives in the WHERE clause of both legs: chunks the viewer
@@ -154,7 +194,10 @@ def hybrid_search(
             select(*_columns(similarity))
             .join(documents, documents.c.id == chunks.c.document_id)
             .where(ready, chunks.c.tsv.bool_op("@@")(q))
-            .order_by(func.ts_rank_cd(chunks.c.tsv, q).desc())
+            # Most distinct question words first, then ts_rank_cd. ts_rank_cd
+            # alone favours chunks repeating one common word ("subject" in
+            # every quoted email header) over the chunk that has them all.
+            .order_by(_coverage(tsquery).desc(), func.ts_rank_cd(chunks.c.tsv, q).desc())
             .limit(candidates)
         )
 
@@ -169,13 +212,7 @@ def hybrid_search(
 
     # relaxed_order can return rows slightly out of order.
     vector_hits.sort(key=lambda h: h.score, reverse=True)
-    return select_hits(
-        vector_hits,
-        keyword_hits,
-        k=k,
-        min_similarity=min_similarity,
-        keyword_keep=keyword_keep,
-    )
+    return vector_hits, keyword_hits
 
 
 def spread_positions(n: int, k: int) -> list[int]:

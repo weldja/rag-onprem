@@ -13,7 +13,7 @@ from app.core.config import Settings, get_settings
 from app.db.tables import chunks
 from app.ingestion import registry
 from app.retrieval.library import library_stats
-from app.retrieval.search import document_names, document_spread, hybrid_search
+from app.retrieval.search import document_names, document_spread, hybrid_search, search_legs
 
 pytestmark = [pytest.mark.db, pytest.mark.enable_socket]
 
@@ -120,6 +120,42 @@ def test_keyword_leg_respects_acl(db: Engine, world: dict[str, int]) -> None:
     # An exact term from HR's document must not surface it for Finance.
     assert "salaries.txt" not in _search(db, _viewer(db, world["fiona"]), "quokkacode")
     assert "salaries.txt" in _search(db, _viewer(db, world["harry"]), "quokkacode")
+
+
+def test_keyword_leg_ranks_chunks_with_more_question_words_first(
+    db: Engine, world: dict[str, int]
+) -> None:
+    """One word repeated many times (every quoted email header has "Subject:")
+    must not outrank the chunk that contains all the question's words."""
+    noisy = " ".join(["Subject: RE: request"] * 30)
+    _doc(db, "thread.txt", noisy, owner=None, groups=[world["finance"]], i=3)
+    _doc(
+        db,
+        "policy.txt",
+        "Respond to a subject access request within 30 days; the deadline is strict.",
+        owner=None,
+        groups=[world["finance"]],
+        i=4,
+    )
+    _, keyword = search_legs(
+        db,
+        "What is the deadline for responding to a subject access request?",
+        QUERY,
+        viewer=_viewer(db, world["fiona"]),
+        embed_model=SETTINGS.embed_model,
+        candidates=30,
+    )
+    assert [h.filename for h in keyword][:2] == ["policy.txt", "thread.txt"]
+    # The ACL still applies to this leg: Harry sees neither (both Finance only).
+    _, harry = search_legs(
+        db,
+        "subject access request",
+        QUERY,
+        viewer=_viewer(db, world["harry"]),
+        embed_model=SETTINGS.embed_model,
+        candidates=30,
+    )
+    assert {h.filename for h in harry} & {"policy.txt", "thread.txt"} == set()
 
 
 def test_removing_a_user_from_a_group_takes_effect_immediately(
