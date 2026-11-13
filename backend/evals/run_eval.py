@@ -56,6 +56,7 @@ class CaseResult:
     answer_correct: bool = False
     seconds: float = 0.0
     first_word_seconds: float = 0.0
+    prompt_tokens: int = 0  # what the model read (0: no model call)
     answer: str = ""
     cited_sources: list[str] = field(default_factory=list)
     retrieved_sources: list[str] = field(default_factory=list)  # [n] order, for diagnosis
@@ -196,6 +197,7 @@ def run_case(
         found=body["found"],
         seconds=round(elapsed, 2),
         first_word_seconds=round(first_word, 2),
+        prompt_tokens=int((body.get("usage") or {}).get("prompt_tokens", 0)),
         answer=body["answer"],
         cited_sources=[f"[{s['id']}] {_label(s)}" for s in body["sources"]],
         retrieved_sources=[f"[{s['id']}] {_label(s)}" for s in body.get("retrieved", [])],
@@ -234,6 +236,7 @@ def summarise(results: list[CaseResult]) -> dict[str, float]:
         return round(sum(xs) / len(xs), 3) if xs else 0.0
 
     cited = sum(r.cited for r in ans)
+    tokens = [r.prompt_tokens for r in ans + un if r.prompt_tokens]
     return {
         "answerable_cases": len(ans),
         "unanswerable_cases": len(un),
@@ -254,6 +257,7 @@ def summarise(results: list[CaseResult]) -> dict[str, float]:
         if ans + un
         else 0.0,
         "max_seconds": max((r.seconds for r in ans + un), default=0.0),
+        "median_prompt_tokens": int(statistics.median(tokens)) if tokens else 0,
         "summary_cases": len(summ),
         "summary_cited": rate([r.citation_hit for r in summ]),
         "summary_accuracy": rate([r.answer_correct for r in summ]),
@@ -303,6 +307,7 @@ def main() -> int:
         )
         print(
             f"{mark} {result.id:<22} {result.first_word_seconds:5.1f}s/{result.seconds:5.1f}s"
+            f" {result.prompt_tokens:5d} tok"
             f"  cites: {result.cited_sources}"
         )
         sys.stdout.flush()

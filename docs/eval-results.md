@@ -327,6 +327,43 @@ the model settings.
     passages picked for the question, so they can't show how many documents exist. This covers
     phrasings the detector doesn't catch.
 
+## Prompt length vs time to first word (2026-11-13, laptop install, Qwen3 4B, q8_0)
+
+Goal: first words within 10 s on the 4 GB T500. On this card reading the prompt sets the floor
+(~150 tokens/s), so fewer or shorter excerpts should help. The api now logs `prompt_tokens`
+and `prompt` (ms) per answer, and the eval records both. Excerpt count is `TOP_K`; the new
+`EXCERPT_MAX_CHARS` trims each excerpt to the run of lines or sentences covering the most
+question words. It keeps the excerpt's id and page, and leaves an excerpt whole when no word
+matches. Answers only; summaries read whole excerpts.
+
+Real documents (42 cases; 34 answerable):
+
+| Variant | Prompt tokens (median) | First word, median | Under 10 s | Citation recall | Citation precision | Answer accuracy |
+|---|---|---|---|---|---|---|
+| **6 excerpts (current)** | 1,572 | 10.1 s | 12 / 32 | 0.941 | **1.000** | **0.941** |
+| 5 excerpts (2 runs, identical) | 1,385 | 8.1 s | 25–27 / 32 | 0.941 | 0.889 | 0.941 |
+| 4 excerpts | 1,153 | 6.3 s | 31 / 32 | 0.941 | 0.917 | 0.912 |
+| 4 excerpts, trimmed to 500 chars | 897 | 4.6 s | 30 / 30 | 0.882 | 1.000 | 0.824 |
+
+Eval corpus (34 cases): every variant kept retrieval recall, citation recall and answer
+accuracy at 1.000. Citation precision was 0.929 / 0.963 / 0.963 / 0.963 and median first word
+3.6 / 2.9 / 2.3 / 2.5 s. Its chunks are short (~200 characters), so trimming changed nothing
+there.
+
+- **5 excerpts:** same accuracy, 2 s faster to the first word. But one answer
+  (`ob-beneficial-owner`) cited all five excerpts, four of them irrelevant, so precision fell
+  from 1.000 to 0.889. It repeated exactly on a second run: at temperature 0.1 the output is
+  deterministic for a given prompt.
+- **4 excerpts:** also loses `sd-faulted` (the right page no longer reaches the model), and one
+  answer over-cites.
+- **Trimming:** cuts the answer out of four more excerpts (`leaf-offload`, `els-ha`,
+  `enc-eventlog`, `sd-faulted`). Keyword overlap doesn't find the relevant part of technical
+  text reliably. Off by default (`EXCERPT_MAX_CHARS=0`).
+- **Decision:** keep 6 excerpts. No shorter prompt kept answer accuracy with citation precision
+  no worse. 5 excerpts is the candidate if one over-cited answer in 34 is acceptable for 2 s
+  less wait (`TOP_K=5`; not applied). The remaining 10 s misses need the model to read faster
+  (an 8 GB+ GPU), not a shorter prompt.
+
 ## Before changing prompts or retrieval
 
 1. Run `bash scripts/eval.sh --detach --label <change>` and compare with the last shipped run.

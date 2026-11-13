@@ -88,6 +88,7 @@ class AskResponse(BaseModel):
     sources: list[SourceOut]
     retrieved: list[SourceOut] | None = None
     prompt_version: str | None = None
+    usage: dict[str, int] | None = None
 
 
 def _cache(body: AskRequest, cache: AnswerCache) -> AnswerCache | None:
@@ -128,6 +129,7 @@ def _request(body: AskRequest, mode: Mode, settings: AppSettings) -> Request:
         history=history,
         mode=mode,
         history_turns=settings.history_turns,
+        excerpt_max_chars=settings.excerpt_max_chars,
     )
 
 
@@ -203,6 +205,7 @@ def ask(
     if body.debug:
         extra["retrieved"] = [SourceOut(**asdict(s)) for s in result.retrieved]
         extra["prompt_version"] = prompt_version()
+        extra["usage"] = result.usage
     return AskResponse(
         answer=result.answer,
         found=result.found,

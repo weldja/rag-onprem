@@ -26,18 +26,27 @@ class FakeLLM:
         self.fail = fail
         self.messages: list[ChatMessage] = []
 
-    def chat(self, messages: list[ChatMessage]) -> str:
+    def _count(self, usage: dict[str, int] | None) -> None:
+        if usage is not None:  # ~4 characters per token
+            usage["prompt_tokens"] = sum(len(m["content"]) for m in self.messages) // 4
+            usage["output_tokens"] = len(self.reply) // 4
+
+    def chat(self, messages: list[ChatMessage], usage: dict[str, int] | None = None) -> str:
         self.messages = messages
         if self.fail:
             raise OllamaError("down")
+        self._count(usage)
         return self.reply
 
-    def chat_stream(self, messages: list[ChatMessage]) -> Iterator[str]:
+    def chat_stream(
+        self, messages: list[ChatMessage], usage: dict[str, int] | None = None
+    ) -> Iterator[str]:
         self.messages = messages
         if self.fail:
             raise OllamaError("down")
         for word in self.reply.split(" "):
             yield word + " "
+        self._count(usage)
 
 
 def chunk(

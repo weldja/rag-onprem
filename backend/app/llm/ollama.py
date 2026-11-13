@@ -86,7 +86,18 @@ class OllamaClient:
         except ValueError as exc:
             raise OllamaError(f"Ollama {path} returned invalid JSON") from exc
 
-    def chat(self, messages: list[ChatMessage]) -> str:
+    @staticmethod
+    def _usage(data: dict[str, Any], usage: dict[str, int] | None) -> None:
+        """Ollama's final message carries the token counts and durations (ns)."""
+        if usage is None:
+            return
+        for key, src in (("prompt_tokens", "prompt_eval_count"), ("output_tokens", "eval_count")):
+            if isinstance(data.get(src), int):
+                usage[key] = data[src]
+        if isinstance(data.get("prompt_eval_duration"), int):
+            usage["prompt_ms"] = data["prompt_eval_duration"] // 1_000_000
+
+    def chat(self, messages: list[ChatMessage], usage: dict[str, int] | None = None) -> str:
         data = self._request(
             "POST",
             "/api/chat",
@@ -103,9 +114,12 @@ class OllamaClient:
             raise OllamaError("Ollama /api/chat response has no message content")
         if data.get("done_reason") == "length":
             log.warning("LLM answer was cut off at the token limit")
+        self._usage(data, usage)
         return content
 
-    def chat_stream(self, messages: list[ChatMessage]) -> Iterator[str]:
+    def chat_stream(
+        self, messages: list[ChatMessage], usage: dict[str, int] | None = None
+    ) -> Iterator[str]:
         payload = {
             "model": self.llm_model,
             "messages": messages,
@@ -133,6 +147,7 @@ class OllamaClient:
                     if data.get("done"):
                         if data.get("done_reason") == "length":
                             log.warning("LLM answer was cut off at the token limit")
+                        self._usage(data, usage)
                         return
         except httpx.TimeoutException as exc:
             raise OllamaError("Ollama timed out on /api/chat") from exc

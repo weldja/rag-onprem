@@ -15,6 +15,7 @@ from app.retrieval.answer import (
     recent_history,
     retrieval_query,
     strip_citations,
+    trim_excerpt,
 )
 from app.retrieval.cache import AnswerCache
 from tests.fakes import FakeEmbedder, FakeLLM, chunk, fixed_retriever
@@ -230,6 +231,74 @@ def test_events_debug_includes_retrieved() -> None:
     assert [s["id"] for s in events[-1]["retrieved"]] == [1, 2]
 
 
+def test_events_debug_includes_token_usage() -> None:
+    events = list(
+        answer_events(
+            ask("q"),
+            retrieve=fixed_retriever([chunk(1)]),
+            llm=FakeLLM("A [1]."),
+            embedder=FakeEmbedder(),
+            debug=True,
+        )
+    )
+    assert events[-1]["usage"]["prompt_tokens"] > 0
+
+
+_MANUAL = "\n".join(
+    [
+        "2.6.50 XFP/10G/1310S/SM/LC",
+        "The XFP/10G/1310S/SM/LC operates at 1310 nm over single-mode fibre.",
+        "It provides digital diagnostic monitoring of operating parameters.",
+        "2.6.51 XFP/10G/850I/MM/LC",
+        "The XFP/10G/850I/MM/LC is a pluggable transceiver for multimode fibre.",
+        "It is operating at a wavelength of 850 nm.",
+        "2.6.52 XFP/11G/1550L/SM/LC",
+        "The XFP/11G/1550L/SM/LC operates at 1550 nm for long reach.",
+    ]
+)
+
+
+def test_trim_keeps_the_part_about_the_question_and_marks_cuts() -> None:
+    out = trim_excerpt(_MANUAL, "At what wavelength does the XFP/10G/850I/MM/LC operate?", 200)
+    assert len(out) <= 200 + 4  # plus the "…" markers
+    assert "wavelength of 850 nm" in out and "850I/MM/LC is a pluggable" in out
+    assert out.startswith("…\n") and out.endswith("\n…")
+    assert "1310 nm" not in out and "1550 nm" not in out
+
+
+def test_trim_leaves_short_or_unmatched_excerpts_alone() -> None:
+    assert trim_excerpt(_MANUAL, "anything", 0) == _MANUAL  # off
+    assert trim_excerpt(_MANUAL, "anything", 5000) == _MANUAL  # fits
+    # No question term occurs: nothing says which part matters, so keep it all.
+    assert trim_excerpt(_MANUAL, "What is the parental leave policy?", 200) == _MANUAL
+
+
+def test_trim_keeps_a_spreadsheet_chunks_column_header() -> None:
+    header = "Sheet Mileage columns: Vehicle | Rate per mile | Notes"
+    rows = [f"Vehicle type {i} | {i}p | standard rate row {i}" for i in range(20)]
+    text = "\n".join([header, *rows[:15], "Motorcycle | 24p | business travel only", *rows[15:]])
+    out = trim_excerpt(text, "What is the motorcycle mileage rate?", 300)
+    assert out.startswith(header + "\n")
+    assert "Motorcycle | 24p" in out
+
+
+def test_trim_splits_long_paragraphs_into_sentences() -> None:
+    para = " ".join(f"Sentence number {i} is filler." for i in range(40))
+    text = para + " Complaints are acknowledged within five working days. " + para
+    out = trim_excerpt(text, "How quickly are complaints acknowledged?", 300)
+    assert "acknowledged within five working days" in out and len(out) < 320
+
+
+def test_answers_trim_excerpts_but_summaries_read_them_whole() -> None:
+    long_text = "\n".join(["Intro line about the office."] * 30 + ["Parking is in bay 7."])
+    hits = [chunk(1, text=long_text)]
+    answer_msg = build_messages(Request("Where is parking?", excerpt_max_chars=120), hits)
+    summary_msg = build_messages(Request("Summarise", mode="summary", excerpt_max_chars=120), hits)
+    assert "Parking is in bay 7." in answer_msg[-1]["content"]
+    assert answer_msg[-1]["content"].count("Intro line") < 5
+    assert summary_msg[-1]["content"].count("Intro line") == 30
+
+
 def test_events_not_found_has_no_tokens() -> None:
     events = list(
         answer_events(
@@ -255,6 +324,7 @@ def test_events_log_timings_without_any_text(caplog: pytest.LogCaptureFixture) -
     line = lines[0]
     assert "mode=answer chunks=1" in line and "found=True" in line
     assert re.search(r"retrieval=\d+ms first_word=\d+ms total=\d+ms", line)
+    assert re.search(r"prompt_tokens=\d+ ", line)
     for text in ("secret", "salaries", "confidential", "payroll", "Private"):
         assert text not in caplog.text
 
