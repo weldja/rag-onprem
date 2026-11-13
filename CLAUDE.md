@@ -267,6 +267,10 @@ Milestone 4 (answer quality):
   submit?") still go to the model. Excerpts are wrapped in `<excerpt>` tags, not `<document>`.
   The model once counted six `<document>` excerpts as "6 documents indexed".
 - Retrieval drops chunks whose text duplicates an already selected chunk.
+- The keyword leg orders by distinct question words matched, then `ts_rank_cd`, and
+  `select_hits` always keeps each leg's best `LEG_KEEP` (2) hits before filling by RRF. Without
+  both, indexing 238 emails pushed clear vector winners out of the top 6
+  (`docs/eval-results.md`, "Outlook emails").
 - Chunks are embedded as "document name - section" + text (`pipeline.embedding_text`); stored
   text, keyword search and prompts use the plain text. Changing that input means re-indexing.
   DOCX tables read each merged cell once. Summaries read a short document whole.
@@ -363,6 +367,8 @@ Outlook emails (`.msg`):
 - Upload `sha256` uniqueness covers top-level documents only (`parent_id IS NULL`).
   Identical attachments share one stored file (`discard_unreferenced`) and copy chunks.
 - `tests/msgfile.py` builds `.msg` files for tests.
+- Email bodies drop link targets and shorten long URLs (Office 365 safelinks) before indexing.
+  They cost tokens and matched keywords in every question.
 
 ## Working conventions
 

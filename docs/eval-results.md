@@ -364,6 +364,50 @@ there.
   less wait (`TOP_K=5`; not applied). The remaining 10 s misses need the model to read faster
   (an 8 GB+ GPU), not a shorter prompt.
 
+## Outlook emails and retrieval with a mixed corpus (2026-11-13, laptop install)
+
+The share's 238 `.msg` emails were indexed (21 attachment documents, 9 of them duplicates whose
+chunks were copied). Times on the T500 laptop, bge-m3 on the CPU:
+- First pass: 34 min for the emails (1,337 excerpts), then ~68 min for the attachments, mostly
+  three large spreadsheets.
+- After link stripping (below), re-indexing all 240 emails took 12.5 min (640 excerpts).
+
+Nine email cases (questions only the emails or their attachments answer, three of them from
+attachments) were added to the real-document set, which now has 43 answerable questions.
+
+| Stage | Original 34 correct | Email cases | Answer accuracy (43) | Median first word |
+|---|---|---|---|---|
+| Before emails (6 excerpts) | 32 | – | – | 10.1 s |
+| Emails indexed, retrieval unchanged | 27 | 7/9 | 0.791 | 14.5 s |
+| + keyword leg ranked by distinct question words | 33 | 8/9 | 0.953 | 15.2 s |
+| + link targets stripped from email bodies | 30 | 9/9 | 0.907 | 11.3 s |
+| **+ each leg's best 2 hits always kept (`LEG_KEEP=2`)** | **33** | **9/9** | **0.977** | **11.4 s** |
+
+Final row in full: retrieval recall 0.977, citation recall 0.977, citation precision 0.981,
+abstention 1.0, summaries 4/4. Eval corpus: unchanged (all 1.000, precision 0.929), summaries
+4/4 cited.
+
+- **Why answers broke:** vector search still ranked the right chunk first (e.g. Fee Schedule
+  0.647 against 0.538 next). The keyword leg was the problem:
+  - It kept the top 30 by `ts_rank_cd`, which rewards repeating one common word. Every quoted
+    email header contains "Subject:".
+  - Reciprocal rank fusion then put chunks found by both legs at middling ranks above the one
+    chunk that was clearly closest in meaning.
+- **Fixes:**
+  - The keyword leg orders by how many distinct question words a chunk contains, then
+    `ts_rank_cd`.
+  - Email bodies drop link targets (`text <https://safelinks…>`, `mailto:`) and shorten bare
+    long URLs: the median body went from 2,167 to 738 characters.
+  - `select_hits` always keeps each leg's best `LEG_KEEP` (2) eligible hits; the other places go
+    by fused rank.
+- **Still missing:** `leaf-last` (ENC manual pages crowd out the short recovery document).
+- **Speed:** time to first word is worse than before the emails (11.4 s median, 10 of 42 under
+  10 s, vs 10.1 s). Prompts are longer (median 1,716 tokens vs 1,572): email excerpts and the IP
+  address-heavy spreadsheets carry more tokens per character.
+- **One summary measured at 35 s total and 19.6 s to the first word** had waited in Ollama's
+  queue behind an eval question. Alone, a one-email summary starts in ~4 s and finishes in
+  13–21 s on the T500.
+
 ## Before changing prompts or retrieval
 
 1. Run `bash scripts/eval.sh --detach --label <change>` and compare with the last shipped run.
