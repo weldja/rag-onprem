@@ -94,6 +94,23 @@ def test_identical_text_from_another_document_is_kept_once() -> None:
     assert [h.chunk_id for h in hits] == [101, 103]
 
 
+def test_each_legs_best_hits_are_kept_even_if_fusion_ranks_them_low() -> None:
+    # The closest chunk in meaning (1) isn't among the keyword hits; emails 2-9
+    # appear in both legs at middling ranks, so fusion alone ranks them above it.
+    best = chunk(1, score=0.65)
+    emails = [chunk(n, score=0.55 - n / 100) for n in range(2, 10)]
+    vector = [best, *emails]
+    keyword = list(reversed(emails))
+    plain = select_hits(vector, keyword, k=6, min_similarity=0.35, keyword_keep=5)
+    assert 101 not in {h.chunk_id for h in plain}
+    kept = select_hits(vector, keyword, k=6, min_similarity=0.35, keyword_keep=5, leg_keep=2)
+    ids = [h.chunk_id for h in kept]
+    assert len(ids) == 6 and 101 in ids and 102 in ids  # vector leg's top two
+    assert 109 in ids and 108 in ids  # keyword leg's top two
+    rank = {h.chunk_id: i for i, h in enumerate(rrf_merge([vector, keyword]))}
+    assert ids == sorted(ids, key=rank.__getitem__)  # still in fused order
+
+
 def test_respects_k() -> None:
     vector = [chunk(i, score=0.9 - i / 100) for i in range(10)]
     assert len(select_hits(vector, [], k=3, min_similarity=0.35, keyword_keep=0)) == 3

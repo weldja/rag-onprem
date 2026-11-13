@@ -62,6 +62,7 @@ class DbSearch:
                 candidates=s.retrieval_candidates,
                 min_similarity=s.min_similarity,
                 keyword_keep=s.keyword_keep,
+                leg_keep=s.leg_keep,
                 document_ids=document_ids,
             )
             if self._reranker is None:

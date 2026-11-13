@@ -91,6 +91,8 @@ class Settings(BaseSettings):
     retrieval_candidates: int = Field(default=30, gt=0, le=200)  # per leg, before fusion
     min_similarity: float = Field(default=0.35, ge=-1.0, le=1.0)
     keyword_keep: int = Field(default=5, ge=0)  # top keyword hits kept even below min_similarity
+    # Best hits of each retrieval leg always sent to the model (search.select_hits).
+    leg_keep: int = Field(default=2, ge=0)
 
     # Optional cross-encoder reranker, baked into the api image at build time.
     # Empty = disabled. Must match the image's RERANKER_MODEL build arg.

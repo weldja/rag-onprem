@@ -68,6 +68,7 @@ def select_hits(
     k: int,
     min_similarity: float,
     keyword_keep: int,
+    leg_keep: int = 0,
 ) -> list[RetrievedChunk]:
     """Fuse both legs and apply the relevance gate.
 
@@ -75,27 +76,46 @@ def select_hits(
       question is off-topic: return nothing, whatever the keyword leg matched.
     - Otherwise keep chunks above min_similarity, plus the top `keyword_keep`
       keyword hits (exact terms such as codes and names that embeddings miss).
+    - The best `leg_keep` hits of each leg are always kept; the other places
+      go by fused rank. Fusion alone rewards chunks both legs found at middling
+      ranks: with hundreds of emails sharing a question's common words, they
+      pushed out the one chunk that was by far the closest in meaning.
+    The result is in fused order.
     """
     best = max((h.score for h in [*vector_hits, *keyword_hits]), default=-1.0)
     if best < min_similarity:
         return []
     keyword_ids = {h.chunk_id for h in keyword_hits[:keyword_keep]}
+
+    def eligible(h: RetrievedChunk) -> bool:
+        return h.score >= min_similarity or h.chunk_id in keyword_ids
+
+    reserved: set[int] = set()
+    for leg in (vector_hits, keyword_hits):
+        reserved.update(h.chunk_id for h in [h for h in leg if eligible(h)][:leg_keep])
+
     fused = rrf_merge([vector_hits, keyword_hits])
     kept: list[RetrievedChunk] = []
+    kept_ids: set[int] = set()
     seen_text: set[str] = set()
-    for h in fused:
-        if h.score < min_similarity and h.chunk_id not in keyword_ids:
-            continue
-        # The same text in two documents (e.g. a re-saved copy of a file) would
-        # spend two of the model's few context slots on one fact.
-        normalised = " ".join(h.text.split()).lower()
-        if normalised in seen_text:
-            continue
-        seen_text.add(normalised)
-        kept.append(h)
-        if len(kept) == k:
-            break
-    return kept
+    for first_pass in (True, False):  # reserved chunks first, then by fused rank
+        for h in fused:
+            if len(kept) == k:
+                break
+            if h.chunk_id in kept_ids or not eligible(h):
+                continue
+            if first_pass and h.chunk_id not in reserved:
+                continue
+            # The same text in two documents (e.g. a re-saved copy of a file)
+            # would spend two of the model's few context slots on one fact.
+            normalised = " ".join(h.text.split()).lower()
+            if normalised in seen_text:
+                continue
+            seen_text.add(normalised)
+            kept.append(h)
+            kept_ids.add(h.chunk_id)
+    rank = {h.chunk_id: i for i, h in enumerate(fused)}
+    return sorted(kept, key=lambda h: rank[h.chunk_id])
 
 
 def _columns(similarity: Any) -> list[Any]:
@@ -135,6 +155,7 @@ def hybrid_search(
     min_similarity: float,
     keyword_keep: int,
     document_ids: Sequence[int] | None = None,
+    leg_keep: int = 0,
 ) -> list[RetrievedChunk]:
     """Relevant chunks, best first, limited to what `viewer` may see (and to
     `document_ids` when given). [] when the question is off-topic."""
@@ -153,6 +174,7 @@ def hybrid_search(
         k=k,
         min_similarity=min_similarity,
         keyword_keep=keyword_keep,
+        leg_keep=leg_keep,
     )
 
 
