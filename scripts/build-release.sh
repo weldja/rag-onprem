@@ -2,8 +2,9 @@
 # Build an offline installation bundle (needs internet on THIS machine only).
 #   bash scripts/build-release.sh VERSION
 # Model choice defaults to .env.example (the customer defaults), NOT your local
-# .env. Override for a test build with, e.g.:
-#   RELEASE_LLM_MODEL=qwen2.5:3b-instruct bash scripts/build-release.sh 0.5.0-test
+# .env: the default answer model (LLM_MODEL) plus the optional ones customers
+# can switch to without a rebuild (LLM_EXTRA_MODELS). Override for a test build:
+#   RELEASE_LLM_EXTRA_MODELS= bash scripts/build-release.sh 0.5.0-test   # default model only
 #
 # Output: release/rag-onprem-VERSION/ (git-ignored), ready to copy to a
 # customer server; with PACK=1 also release/rag-onprem-VERSION.tar.
@@ -22,6 +23,8 @@ VERSION="${1:-}"
 }
 
 LLM_MODEL="${RELEASE_LLM_MODEL:-$(from_example LLM_MODEL)}"
+LLM_EXTRA_MODELS="${RELEASE_LLM_EXTRA_MODELS-$(from_example LLM_EXTRA_MODELS)}"
+[[ "$LLM_EXTRA_MODELS" != *" "* ]] || { echo "LLM_EXTRA_MODELS must be comma-separated without spaces" >&2; exit 2; }
 EMBED_MODEL="${RELEASE_EMBED_MODEL:-$(from_example EMBED_MODEL)}"
 EMBED_DIM="${RELEASE_EMBED_DIM:-$(from_example EMBED_DIM)}"
 RERANKER_MODEL="${RELEASE_RERANKER_MODEL:-$(from_example RERANKER_MODEL)}"
@@ -38,7 +41,7 @@ out="release/rag-onprem-$VERSION"
 [ ! -e "$out" ] || { echo "$out already exists; remove it first" >&2; exit 1; }
 
 echo "==> Building rag-onprem $VERSION ($commit)"
-echo "    LLM=$LLM_MODEL  embeddings=$EMBED_MODEL ($EMBED_DIM)  reranker=${RERANKER_MODEL:-none}"
+echo "    LLM=$LLM_MODEL (also: ${LLM_EXTRA_MODELS:-none})  embeddings=$EMBED_MODEL ($EMBED_DIM)  reranker=${RERANKER_MODEL:-none}"
 
 OCR_IMAGE_LANGUAGES="${RELEASE_OCR_LANGUAGES:-$(from_example OCR_IMAGE_LANGUAGES)}"
 docker build --target runtime --build-arg "RERANKER_MODEL=$RERANKER_MODEL" \
@@ -46,6 +49,7 @@ docker build --target runtime --build-arg "RERANKER_MODEL=$RERANKER_MODEL" \
     -t "rag-onprem/api:$VERSION" "$(native_path backend)"
 docker build -t "rag-onprem/web:$VERSION" "$(native_path frontend)"
 docker build --build-arg "LLM_MODEL=$LLM_MODEL" --build-arg "EMBED_MODEL=$EMBED_MODEL" \
+    --build-arg "LLM_EXTRA_MODELS=$LLM_EXTRA_MODELS" \
     -t "rag-onprem/ollama:$VERSION" "$(native_path deploy/ollama)"
 docker pull "$PGVECTOR_IMAGE"
 docker tag "$PGVECTOR_IMAGE" "rag-onprem/pgvector:$VERSION"
@@ -58,6 +62,7 @@ cp -r deploy/nginx/templates "$out/nginx/templates"
 cp deploy/certs/README.md "$out/certs/README.md"
 cp docs/operations.md "$out/README.md"
 sed -e "s|^LLM_MODEL=.*|LLM_MODEL=$LLM_MODEL|" \
+    -e "s|^LLM_EXTRA_MODELS=.*|LLM_EXTRA_MODELS=$LLM_EXTRA_MODELS|" \
     -e "s|^EMBED_MODEL=.*|EMBED_MODEL=$EMBED_MODEL|" \
     -e "s|^EMBED_DIM=.*|EMBED_DIM=$EMBED_DIM|" \
     -e "s|^RERANKER_MODEL=.*|RERANKER_MODEL=$RERANKER_MODEL|" \
@@ -73,6 +78,7 @@ sed -e "s|^LLM_MODEL=.*|LLM_MODEL=$LLM_MODEL|" \
     echo "commit=$commit"
     echo "built_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     echo "llm_model=$LLM_MODEL"
+    echo "llm_models=$LLM_MODEL${LLM_EXTRA_MODELS:+,$LLM_EXTRA_MODELS}"
     echo "embed_model=$EMBED_MODEL"
     echo "reranker_model=${RERANKER_MODEL:-}"
     echo "ocr_languages=${OCR_IMAGE_LANGUAGES}"

@@ -48,8 +48,9 @@ def wait_for_models() -> None:
             last_problem = str(exc)
         if time.monotonic() >= deadline:
             raise RuntimeError(
-                f"Startup check failed ({last_problem}). Rebuild the ollama image with "
-                "LLM_MODEL/EMBED_MODEL matching the API settings; see deploy/ollama/Dockerfile."
+                f"Startup check failed ({last_problem}). LLM_MODEL must be one of the answer "
+                "models built into the ollama image (a bundle lists them in VERSION as "
+                "llm_models), and EMBED_MODEL must match it; see deploy/ollama/Dockerfile."
             )
         time.sleep(2)
 

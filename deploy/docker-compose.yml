@@ -10,7 +10,7 @@ name: rag-onprem
 x-backend-env: &backend-env
   DATABASE_URL: postgresql+psycopg://rag:${POSTGRES_PASSWORD}@db:5432/rag
   OLLAMA_URL: http://ollama:11434
-  LLM_MODEL: ${LLM_MODEL:-qwen2.5:7b-instruct}
+  LLM_MODEL: ${LLM_MODEL:-qwen3:4b-instruct-2507-q4_K_M}
   EMBED_MODEL: ${EMBED_MODEL:-bge-m3}
   EMBED_DIM: ${EMBED_DIM:-1024}
   LLM_NUM_CTX: ${LLM_NUM_CTX:-8192}
@@ -55,10 +55,13 @@ services:
     build:
       context: ./ollama
       args:
-        LLM_MODEL: ${LLM_MODEL:-qwen2.5:7b-instruct}
+        LLM_MODEL: ${LLM_MODEL:-qwen3:4b-instruct-2507-q4_K_M}
         EMBED_MODEL: ${EMBED_MODEL:-bge-m3}
+        # Empty by default in dev (smaller image); the release bundle sets it.
+        LLM_EXTRA_MODELS: ${DEV_LLM_EXTRA_MODELS:-}
     image: rag-onprem/ollama:dev
     environment:
+      LLM_MODEL: ${LLM_MODEL:-qwen3:4b-instruct-2507-q4_K_M}
       OLLAMA_KEEP_ALIVE: "-1"
       OLLAMA_CONTEXT_LENGTH: ${LLM_NUM_CTX:-8192}
       OLLAMA_NO_CLOUD: "1"

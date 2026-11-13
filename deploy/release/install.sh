@@ -33,17 +33,25 @@ else
     set_env POSTGRES_PASSWORD "$(random_secret 32)"
     chmod 600 .env
     ok "created .env with a random database password"
-    # A card under 6 GB only holds the model with a smaller context window and a
-    # shorter answer limit (tested on a 4 GB NVIDIA T500). Only on a new .env, so
-    # values an administrator has set are never replaced.
-    if [ "$gpu" = 1 ] && [ "${vram_mb:-0}" -gt 0 ] && [ "${vram_mb:-0}" -lt 6000 ]; then
-        set_env LLM_NUM_CTX 4096
-        set_env LLM_MAX_TOKENS 768
-        set_env EMBED_NUM_GPU 0
-        # Half-size model working memory: on a 4 GB card it is what lets the
-        # whole model onto the GPU, doubling answer speed (docs/eval-results.md).
-        set_env OLLAMA_KV_CACHE_TYPE q8_0
-        ok "small GPU ($((vram_mb / 1024)) GB): LLM_NUM_CTX=4096, LLM_MAX_TOKENS=768, EMBED_NUM_GPU=0, OLLAMA_KV_CACHE_TYPE=q8_0"
+    # Hardware limits follow the card's memory, not the model. Only on a new
+    # .env, so values an administrator has set are never replaced.
+    #  < 6 GB: the answer model fits with a smaller context window, a shorter
+    #          answer limit and half-size working memory, and the embedding
+    #          model stays on the CPU (measured on a 4 GB NVIDIA T500).
+    #  6-8 GB: both models fit with half-size working memory (estimated).
+    #  8 GB+:  the defaults in .env.example.
+    # 7500, not 8192: 8 GB cards report slightly less than 8192 MiB.
+    if [ "$gpu" = 1 ] && [ "${vram_mb:-0}" -gt 0 ]; then
+        if [ "$vram_mb" -lt 6000 ]; then
+            set_env LLM_NUM_CTX 4096
+            set_env LLM_MAX_TOKENS 768
+            set_env EMBED_NUM_GPU 0
+            set_env OLLAMA_KV_CACHE_TYPE q8_0
+            ok "GPU with $((vram_mb / 1024)) GB: LLM_NUM_CTX=4096, LLM_MAX_TOKENS=768, EMBED_NUM_GPU=0, OLLAMA_KV_CACHE_TYPE=q8_0"
+        elif [ "$vram_mb" -lt 7500 ]; then
+            set_env OLLAMA_KV_CACHE_TYPE q8_0
+            ok "GPU with $((vram_mb / 1024)) GB: OLLAMA_KV_CACHE_TYPE=q8_0"
+        fi
     fi
 fi
 if [ "$gpu" = 1 ]; then

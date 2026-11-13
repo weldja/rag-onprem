@@ -198,6 +198,36 @@ model already loaded, `num_ctx` 8192:
 - Not yet measured: the 7B entirely on an 8 GB+ GPU. Measure it on the first customer-class GPU
   and record it here, for both a question and a summary.
 
+## GPU memory budget (2026-11-13, estimates)
+
+Since 2026-11-13 every install uses Qwen3 4B, and `install.sh` picks the memory settings from
+the card size. The 4 GB row is measured; the other rows are **estimates**, built from:
+- `ollama ps` on the laptop: 4B at 2.9 GB with `num_ctx` 4096 and q8_0; bge-m3 1.2 GB
+- the models' context memory per token:
+  - Qwen3 4B: 36 layers × 8 KV heads × 128 → 144 KiB f16, 76.5 KiB q8_0
+  - Qwen2.5 7B: 28 layers × 4 KV heads × 128 → 56 KiB f16
+- weights: 4B ≈ 2.6 GB with compute buffers; 7B ≈ 4.4 GB + ~0.4 GB buffers
+- reserves: Ollama's 512 MiB margin (`LLAMA_ARG_FIT_TARGET`) plus ~300 MiB CUDA context
+
+Check each tier with the operations.md checklist on the first real card.
+
+| Card (usable) | Settings | 4B + context | bge-m3 | Total | Spare |
+|---|---|---|---|---|---|
+| 4 GB (~3.2 GB) | ctx 4096, q8_0, bge-m3 on CPU | 2.9 GB (measured) | CPU | 2.9 GB | ~0.3 GB |
+| 6 GB (~5.1 GB) | ctx 8192, q8_0 | 2.6 + 0.6 = 3.2 GB | 1.2 GB | 4.4 GB | ~0.7 GB |
+| 6 GB, if f16 | ctx 8192, f16 | 2.6 + 1.15 = 3.75 GB | 1.2 GB | 4.95 GB | ~0.15 GB: too tight, hence q8_0 |
+| 8 GB (~7.1 GB) | ctx 8192, f16 (defaults) | 3.75 GB | 1.2 GB | 4.95 GB | ~2.1 GB |
+| 8 GB, 7B option | ctx 8192, f16 | 4.8 + 0.45 = 5.25 GB | 1.2 GB | 6.45 GB | ~0.65 GB: tight, so `EMBED_NUM_GPU=0` is recommended |
+| 12 GB+, 7B option | ctx 8192, f16 | 5.25 GB | 1.2 GB | 6.45 GB | 4 GB+ |
+
+**A larger `LLM_NUM_CTX` doesn't help with the current settings.** A question uses ~1,500–2,000
+prompt tokens plus up to 1,024 answer tokens, and a 6-excerpt summary about the same, so 8192
+already leaves room. The context only needs to grow if `SUMMARY_CHUNKS` is raised for fuller
+summaries, and every extra excerpt adds ~0.7–2 s before the first word on a slow card.
+Suggested for a 12 GB+ card, if customers want longer summaries: `LLM_NUM_CTX=16384` (+1.15 GB
+f16) with `SUMMARY_CHUNKS=10`. Not a default: it would break the 10-second target on
+summaries for smaller cards.
+
 ## Real documents (2026-11-09, laptop install, Qwen3 4B, 14 documents)
 
 40 hand-written cases against the customer-style documents on the laptop install, asked as a

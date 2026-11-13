@@ -10,7 +10,7 @@ docker run --rm --network rag-onprem_backend --entrypoint python \
     -e DATABASE_URL="postgresql+psycopg://rag:${POSTGRES_PASSWORD}@db:5432/rag" \
     -e OLLAMA_URL=http://ollama:11434 \
     -e EMBED_MODEL="${EMBED_MODEL:-bge-m3}" \
-    -e LLM_MODEL="${LLM_MODEL:-qwen2.5:7b-instruct}" \
+    -e LLM_MODEL="${LLM_MODEL:-qwen3:4b-instruct-2507-q4_K_M}" \
     -e RERANKER_MODEL="${RERANKER_MODEL:-}" \
     -e MIN_SIMILARITY="${MIN_SIMILARITY:-0.35}" \
     -e RERANK_MIN_SCORE="${RERANK_MIN_SCORE:-}" \
