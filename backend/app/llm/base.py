@@ -10,9 +10,15 @@ class ChatMessage(TypedDict):
 
 
 class LLMClient(Protocol):
-    def chat(self, messages: list[ChatMessage]) -> str: ...
+    """`usage`, if given, is filled with token counts when the call completes:
+    prompt_tokens, output_tokens and prompt_ms (time spent reading the prompt).
+    Counts only, never text, so they can be logged."""
 
-    def chat_stream(self, messages: list[ChatMessage]) -> Iterator[str]:
+    def chat(self, messages: list[ChatMessage], usage: dict[str, int] | None = None) -> str: ...
+
+    def chat_stream(
+        self, messages: list[ChatMessage], usage: dict[str, int] | None = None
+    ) -> Iterator[str]:
         """Yield the answer in pieces as the model produces them."""
         ...
 

@@ -18,7 +18,7 @@ import logging
 import re
 import time
 from collections.abc import Callable, Iterator, Sequence
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Literal
 
 from app.llm.base import ChatMessage, Embedder, LLMClient
@@ -59,6 +59,8 @@ class Answer:
     found: bool
     sources: list[Source]
     retrieved: list[Source] = field(default_factory=list)  # every chunk sent to the LLM
+    # Token counts from the model (prompt_tokens, output_tokens, prompt_ms); debug only.
+    usage: dict[str, int] = field(default_factory=dict)
 
 
 NOT_FOUND = Answer(NOT_FOUND_ANSWER, found=False, sources=[])
@@ -111,9 +113,76 @@ class Request:
     history: Sequence[ChatMessage] = ()
     mode: Mode = "answer"
     history_turns: int = 1
+    # Longest excerpt sent to the model in answer mode (0 = whole chunks); see trim_excerpt.
+    excerpt_max_chars: int = 0
 
 
-def build_context(hits: list[RetrievedChunk]) -> str:
+# Words too common to say which part of an excerpt a question is about.
+_STOP_WORDS_TEXT = """
+    a about after all an and any are as at be been before but by can could did do does each
+    for from get got had has have how i if in into is it its may me might more most much must my
+    no not of on or our out over per should so some than that the their them then there these
+    they this those to up us was we were what when where which while who whom why will with
+    would you your
+"""
+_STOP_WORDS = frozenset(_STOP_WORDS_TEXT.split())
+_SHEET_HEADER = re.compile(r"^(Sheet .*|Table) columns: ")
+_SENTENCE_END = re.compile(r"(?<=[.!?;])\s+")
+
+
+def question_terms(question: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z0-9]+", question.lower()) if len(w) > 1} - _STOP_WORDS
+
+
+def _covers(unit: str, terms: set[str]) -> set[str]:
+    """Question terms a piece of text contains. Long terms also match by their
+    stem, so "wavelengths" matches "wavelength"."""
+    words = set(re.findall(r"[a-z0-9]+", unit.lower()))
+    found = terms & words
+    for term in terms - found:
+        if len(term) >= 5 and any(w.startswith(term[: len(term) - 2]) for w in words):
+            found.add(term)
+    return found
+
+
+def trim_excerpt(text: str, question: str, max_chars: int) -> str:
+    """The part of an excerpt (at most max_chars) that covers the most question
+    terms, so the model reads less before it starts writing. Cuts fall on line
+    or sentence boundaries and are marked with "…". A spreadsheet chunk keeps
+    its column header line. Returned unchanged when it already fits, or when
+    no term matches (then nothing says which part matters, so nothing is cut).
+    The excerpt keeps its id, document and page, so citations are unaffected."""
+    if max_chars <= 0 or len(text) <= max_chars:
+        return text
+    terms = question_terms(question)
+    lines = text.split("\n")
+    head = lines.pop(0) if _SHEET_HEADER.match(lines[0]) and len(lines) > 1 else None
+    budget = max_chars - (len(head) + 1 if head else 0)
+    units: list[str] = []
+    for line in lines:  # long paragraphs (DOCX, HTML) are split into sentences
+        units.extend(_SENTENCE_END.split(line) if len(line) > budget // 2 else [line])
+    covers = [_covers(u, terms) for u in units]
+    best: tuple[int, int, int] | None = None  # (terms covered, start, end)
+    for start in range(len(units)):
+        size, seen, end = 0, set(), start
+        while end < len(units) and size + len(units[end]) + 1 <= budget:
+            size += len(units[end]) + 1
+            seen |= covers[end]
+            end += 1
+        if end > start and (best is None or len(seen) > best[0]):
+            best = (len(seen), start, end)
+    if best is None or best[0] == 0:
+        return text
+    _, start, end = best
+    body = "\n".join(units[start:end])
+    if start > 0:
+        body = "…\n" + body
+    if end < len(units):
+        body += "\n…"
+    return f"{head}\n{body}" if head else body
+
+
+def build_context(hits: list[RetrievedChunk], question: str = "", max_chars: int = 0) -> str:
     parts = []
     for n, hit in enumerate(hits, start=1):
         attrs = f'id="{n}" source="{html.escape(hit.filename, quote=True)}"'
@@ -121,7 +190,8 @@ def build_context(hits: list[RetrievedChunk]) -> str:
             attrs += f' page="{hit.page}"'
         if hit.section:
             attrs += f' section="{html.escape(hit.section, quote=True)}"'
-        body = hit.text.replace("</excerpt>", "<\\/excerpt>")
+        text = trim_excerpt(hit.text, question, max_chars)
+        body = text.replace("</excerpt>", "<\\/excerpt>")
         parts.append(f"<excerpt {attrs}>\n{body}\n</excerpt>")
     return "\n\n".join(parts)
 
@@ -159,14 +229,20 @@ def retrieval_query(question: str, history: Sequence[ChatMessage]) -> str:
 
 def build_messages(req: Request, hits: list[RetrievedChunk]) -> list[ChatMessage]:
     system = load_prompt("summary_system" if req.mode == "summary" else "answer_system")
+    # Summaries need the whole of each sampled excerpt; answers only the part
+    # about the question (with the previous question for a follow-up).
+    if req.mode == "answer":
+        context = build_context(
+            hits, retrieval_query(req.question, req.history), req.excerpt_max_chars
+        )
+    else:
+        context = build_context(hits)
     return [
         {"role": "system", "content": system},
         *recent_history(req.history, req.history_turns),
         {
             "role": "user",
-            "content": load_prompt("answer_user").format(
-                context=build_context(hits), question=req.question
-            ),
+            "content": load_prompt("answer_user").format(context=context, question=req.question),
         },
     ]
 
@@ -222,6 +298,11 @@ class _Timer:
         self.retrieved_at: float | None = None
         self.first_word_at: float | None = None
         self.cached = False
+        self.usage: dict[str, int] = {}  # filled by the LLM client
+        self.context_chars: int | None = None  # after trimming, if messages were built
+
+    def built(self, messages: list[ChatMessage]) -> None:
+        self.context_chars = len(messages[-1]["content"])
 
     def retrieved(self) -> None:
         self.retrieved_at = time.monotonic()
@@ -234,13 +315,19 @@ class _Timer:
         return "-" if t is None else f"{(t - self.start) * 1000:.0f}ms"
 
     def log(self, hits: list[RetrievedChunk], found: bool | None) -> None:
-        context_chars = sum(len(h.text) for h in hits)
+        # context_chars: the user message as sent (excerpts after trimming,
+        # plus the question); prompt_tokens: what the model actually read.
+        context_chars = (
+            self.context_chars if self.context_chars is not None else sum(len(h.text) for h in hits)
+        )
         log.info(
-            "answer timing: mode=%s chunks=%d context_chars=%d retrieval=%s first_word=%s "
-            "total=%s found=%s cached=%s",
+            "answer timing: mode=%s chunks=%d context_chars=%d prompt_tokens=%s prompt=%s "
+            "retrieval=%s first_word=%s total=%s found=%s cached=%s",
             self.mode,
             len(hits),
             context_chars,
+            self.usage.get("prompt_tokens", "-"),
+            f"{self.usage['prompt_ms']}ms" if "prompt_ms" in self.usage else "-",
             self._ms(self.retrieved_at),
             self._ms(self.first_word_at),
             self._ms(time.monotonic()),
@@ -303,6 +390,7 @@ def answer_question(
         timer.log(hits, found=False)
         return NOT_FOUND
     messages = build_messages(req, hits)
+    timer.built(messages)
     key = cache.key(messages) if cache is not None else ""
     cached = cache.get(key) if cache is not None else None
     if cached is not None:
@@ -311,14 +399,14 @@ def answer_question(
         timer.log(hits, found=result.found)
         return result
     try:
-        result = finalise(llm.chat(messages), hits, req.mode)
+        result = finalise(llm.chat(messages, timer.usage), hits, req.mode)
     except OllamaError:
         timer.log(hits, found=None)
         raise
     if cache is not None and result.found:
         cache.put(key, result.answer)
     timer.log(hits, found=result.found)
-    return result
+    return replace(result, usage=dict(timer.usage))
 
 
 def answer_events(
@@ -352,6 +440,7 @@ def answer_events(
             yield {"type": "done", **answer_dict(NOT_FOUND, debug)}
             return
         messages = build_messages(req, hits)
+        timer.built(messages)
         key = cache.key(messages) if cache is not None else ""
         cached = cache.get(key) if cache is not None else None
         if cached is not None:
@@ -365,12 +454,12 @@ def answer_events(
             return
         yield reading_status(hits, summary=req.mode == "summary")
         parts: list[str] = []
-        for piece in llm.chat_stream(messages):
+        for piece in llm.chat_stream(messages, timer.usage):
             if piece.strip():
                 timer.word()
             parts.append(piece)
             yield {"type": "token", "text": piece}
-        result = finalise("".join(parts), hits, req.mode)
+        result = replace(finalise("".join(parts), hits, req.mode), usage=dict(timer.usage))
         if cache is not None and result.found:
             cache.put(key, result.answer)
         timer.log(hits, found=result.found)
@@ -390,4 +479,5 @@ def answer_dict(answer: Answer, debug: bool = False) -> dict[str, Any]:
     if debug:
         out["retrieved"] = [asdict(s) for s in answer.retrieved]
         out["prompt_version"] = prompt_version()
+        out["usage"] = answer.usage
     return out

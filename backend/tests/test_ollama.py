@@ -149,6 +149,29 @@ def test_chat_stream_yields_pieces_until_done() -> None:
     assert pieces == ["Five ", "days [1]."]
 
 
+def test_usage_reports_token_counts_from_the_final_message() -> None:
+    final = {
+        "message": {"content": ""},
+        "done": True,
+        "prompt_eval_count": 1432,
+        "eval_count": 57,
+        "prompt_eval_duration": 9_870_000_000,
+    }
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if json.loads(req.content)["stream"]:
+            return httpx.Response(200, content=_ndjson({"message": {"content": "x"}}, final))
+        return httpx.Response(200, json={**final, "message": {"content": "x"}})
+
+    client = make_client(httpx.MockTransport(handler))
+    streamed: dict[str, int] = {}
+    list(client.chat_stream([], streamed))
+    whole: dict[str, int] = {}
+    client.chat([], whole)
+    expected = {"prompt_tokens": 1432, "output_tokens": 57, "prompt_ms": 9870}
+    assert streamed == expected and whole == expected
+
+
 def test_chat_stream_error_line_raises() -> None:
     transport = httpx.MockTransport(
         lambda _r: httpx.Response(200, content=_ndjson({"error": "model crashed"}))
