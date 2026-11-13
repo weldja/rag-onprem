@@ -18,6 +18,7 @@ from app.db.tables import (
     sources,
     user_groups,
 )
+from app.ingestion.attachments import descendant_paths
 
 
 @dataclass(frozen=True)
@@ -42,6 +43,7 @@ class DocumentInfo:
     progress_total: int | None = None
     indexed_at: datetime | None = None
     queue_position: int | None = None  # 1 = next to be indexed
+    parent_id: int | None = None  # the email this document was attached to
 
 
 @dataclass(frozen=True)
@@ -162,7 +164,9 @@ def find_by_sha(engine: Engine, sha256: str) -> int | None:
     with engine.connect() as conn:
         found: int | None = conn.execute(
             select(documents.c.id).where(
-                documents.c.sha256 == sha256, documents.c.source_id.is_(None)
+                documents.c.sha256 == sha256,
+                documents.c.source_id.is_(None),
+                documents.c.parent_id.is_(None),
             )
         ).scalar_one_or_none()
     return found
@@ -224,6 +228,7 @@ def _info_query(embed_model: str, viewer: Viewer) -> Any:
             documents.c.progress_total,
             documents.c.indexed_at,
             queue.c.queue_position,
+            documents.c.parent_id,
         )
         .select_from(documents.outerjoin(queue, queue.c.document_id == documents.c.id))
         .where(can_see(viewer))
@@ -272,6 +277,7 @@ def _require_manage(conn: Any, doc_id: int, viewer: Viewer) -> Any:
             documents.c.storage_path,
             documents.c.status,
             documents.c.source_id,
+            documents.c.parent_id,
             can_manage(viewer).label("manage"),
         )
         .where(documents.c.id == doc_id, can_see(viewer))
@@ -284,10 +290,16 @@ def _require_manage(conn: Any, doc_id: int, viewer: Viewer) -> Any:
     return row
 
 
-def delete_document(engine: Engine, doc_id: int, viewer: Viewer) -> str | None:
-    """Delete an uploaded document (chunks, jobs and sharing cascade). Returns the
-    stored file path. File-share documents follow the share: the next scan
-    would only add them again."""
+_ATTACHMENT_FOLLOWS = (
+    "This document is an email attachment. It follows its email: change or remove the email."
+)
+
+
+def delete_document(engine: Engine, doc_id: int, viewer: Viewer) -> tuple[str | None, list[str]]:
+    """Delete an uploaded document (chunks, jobs, sharing and attachment
+    documents cascade). Returns its stored file and its attachments' files
+    (see attachments.discard_unreferenced). File-share documents follow the
+    share: the next scan would only add them again."""
     with engine.begin() as conn:
         row = _require_manage(conn, doc_id, viewer)
         if row.source_id is not None:
@@ -295,9 +307,12 @@ def delete_document(engine: Engine, doc_id: int, viewer: Viewer) -> str | None:
                 "This document comes from a file share. Remove or exclude it on the "
                 "share; the index follows at the next scan."
             )
+        if row.parent_id is not None:
+            raise ConflictError(_ATTACHMENT_FOLLOWS)
+        paths = descendant_paths(conn, doc_id)
         conn.execute(delete(documents).where(documents.c.id == doc_id))
-    path: str | None = row.storage_path
-    return path
+    own: str | None = row.storage_path
+    return own, paths
 
 
 def enqueue_reindex(engine: Engine, doc_id: int, viewer: Viewer) -> None:
@@ -358,24 +373,51 @@ def apply_action(engine: Engine, action: Action, doc_ids: list[int], viewer: Vie
     return result
 
 
+def _descendants(conn: Any, doc_id: int) -> list[int]:
+    """An email's attachment documents, at any depth."""
+    return list(
+        conn.execute(
+            text(
+                """
+                WITH RECURSIVE tree(id) AS (
+                    SELECT id FROM documents WHERE parent_id = :doc
+                    UNION ALL
+                    SELECT d.id FROM documents d JOIN tree t ON d.parent_id = t.id)
+                SELECT id FROM tree
+                """
+            ),
+            {"doc": doc_id},
+        ).scalars()
+    )
+
+
 def _apply_one(conn: Any, action: Action, row: Any) -> str | None:
-    """Returns why the document was left alone, or None if changed."""
+    """Returns why the document was left alone, or None if changed. Excluding
+    or including an email does the same to its attachments."""
     if action == "exclude":
         if row.status == "excluded":
             return "already excluded"
+        targets = [row.id, *_descendants(conn, row.id)]
         conn.execute(
             update(ingest_jobs)
             .where(
-                ingest_jobs.c.document_id == row.id, ingest_jobs.c.status.in_(["queued", "running"])
+                ingest_jobs.c.document_id.in_(targets),
+                ingest_jobs.c.status.in_(["queued", "running"]),
             )
             .values(status="cancelled", finished_at=func.now())
         )
-        conn.execute(delete(chunks).where(chunks.c.document_id == row.id))
-        _set(conn, row.id, "excluded")
+        conn.execute(delete(chunks).where(chunks.c.document_id.in_(targets)))
+        for doc in targets:
+            _set(conn, doc, "excluded")
         return None
     if action == "include":
         if row.status != "excluded":
             return "not excluded"
+        # The email's attachments come back when it is indexed again: its
+        # re-index re-creates or re-queues them.
+        for child in _descendants(conn, row.id):
+            _set(conn, child, "pending")
+            conn.execute(insert(ingest_jobs).values(document_id=child, kind="ingest"))
         _set(conn, row.id, "pending")
         conn.execute(insert(ingest_jobs).values(document_id=row.id, kind="ingest"))
         return None
@@ -430,11 +472,15 @@ def set_groups(engine: Engine, doc_id: int, group_ids: list[int], viewer: Viewer
                     "File-share documents are visible to the share's groups "
                     "(SHARE_n_GROUPS in .env), not set per document"
                 )
-            conn.execute(delete(document_groups).where(document_groups.c.document_id == doc_id))
+            if row.parent_id is not None:
+                raise ConflictError(_ATTACHMENT_FOLLOWS)
+            # An email's attachments (at any depth) are shared exactly as it is.
+            targets = [doc_id, *_descendants(conn, doc_id)]
+            conn.execute(delete(document_groups).where(document_groups.c.document_id.in_(targets)))
             if wanted:
                 conn.execute(
                     insert(document_groups),
-                    [{"document_id": doc_id, "group_id": g} for g in wanted],
+                    [{"document_id": d, "group_id": g} for d in targets for g in wanted],
                 )
     except IntegrityError as exc:
         raise ConflictError("One of those groups doesn't exist") from exc

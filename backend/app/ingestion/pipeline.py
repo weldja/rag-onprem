@@ -6,6 +6,7 @@ half-written document visible to search.
 """
 
 import logging
+import time
 from collections.abc import Callable
 from itertools import batched
 from pathlib import Path
@@ -15,8 +16,10 @@ from sqlalchemy import Engine, delete, func, insert, select, text, update
 
 from app.core.config import Settings
 from app.db.tables import chunks, documents
+from app.ingestion import attachments
 from app.ingestion.chunking import Document, RecursiveTextSplitter
 from app.ingestion.loaders import LoadError, is_toc_chunk, load_file
+from app.ingestion.msg import Email, MsgError, read_msg
 from app.ingestion.ocr import OcrOptions
 from app.llm.base import Embedder
 
@@ -179,16 +182,31 @@ def process_document(
         if row.source_id is not None:
             raise IngestError(f"{row.filename} is no longer on the share (or can't be read)")
         raise IngestError(f"Original file for {row.filename} is missing; upload it again")
+    started = time.monotonic()
+    ext = (row.content_type or Path(row.filename).suffix).lower().lstrip(".")
 
     copied = copy_from_duplicate(engine, doc_id, row.sha256, embedder.embed_model)
     if copied is not None:
-        log.info("Document %d: copied %d chunks from an identical document", doc_id, copied)
+        queued = ""
+        if ext == "msg":  # the copy has no attachment documents of its own yet
+            try:
+                mail = read_msg(row.storage_path)
+            except MsgError as exc:
+                raise IngestError(str(exc)) from exc
+            queued = _sync_attachments(engine, doc_id, mail, settings)
+        log.info(
+            "Document %d: copied %d chunks from an identical document in %.1f s%s",
+            doc_id,
+            copied,
+            time.monotonic() - started,
+            queued,
+        )
         return copied
 
     try:
         loaded = load_file(
             Path(row.storage_path),
-            row.content_type or Path(row.filename).suffix,
+            ext,
             sheet_chunk_chars=settings.sheet_chunk_chars,
             ocr=ocr_options(settings),
         )
@@ -236,5 +254,30 @@ def process_document(
             ],
         )
         _mark_ready(conn, doc_id, loaded.page_count)
-    log.info("Indexed document %d: %d chunks", doc_id, len(pieces))
+    queued = _sync_attachments(engine, doc_id, loaded.email, settings) if loaded.email else ""
+    log.info(
+        "Indexed document %d: %d chunks in %.1f s%s",
+        doc_id,
+        len(pieces),
+        time.monotonic() - started,
+        queued,
+    )
     return len(pieces)
+
+
+def _sync_attachments(engine: Engine, doc_id: int, mail: Email, settings: Settings) -> str:
+    """Create, update or remove the email's attachment documents. Returns a
+    note for the log line ("; 2 attachments queued")."""
+    planned = attachments.plan(doc_id, mail, settings)
+    with engine.begin() as conn:
+        status = conn.execute(
+            select(documents.c.status).where(documents.c.id == doc_id).with_for_update()
+        ).scalar_one_or_none()
+        if status != "ready":  # excluded or deleted meanwhile: leave its children alone
+            return ""
+        queued, removed, released = attachments.sync(conn, doc_id, planned)
+    attachments.discard_unreferenced(engine, released, settings.upload_dir)
+    parts = [f"{queued} attachment(s) queued"] if queued else []
+    if removed:
+        parts.append(f"{removed} removed")
+    return f"; {', '.join(parts)}" if parts else ""

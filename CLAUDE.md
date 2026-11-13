@@ -43,7 +43,7 @@ into an offline bundle). It is **never** allowed at container start or at reques
 | Vector store + DB | **PostgreSQL 16 + pgvector** | One stateful service holds documents, chunks, vectors, users, ACLs and job queue. Gives hybrid search (pgvector + `tsvector` full-text) and a single backup target. Qdrant is the alternative if vector scale outgrows Postgres. |
 | Backend | **Python 3.12, FastAPI**, Pydantic v2, SQLAlchemy 2 + psycopg 3, Alembic | |
 | Dependency mgmt | **uv** (`pyproject.toml` + `uv.lock`) | Reproducible locked installs. `uv run` avoids venv-activation differences on Windows. |
-| Document parsing | `pypdfium2` (PDF), `python-docx`, `python-pptx`, `openpyxl`, `beautifulsoup4`, plain text/Markdown | Permissive licences. pypdf ran words together on some PDFs; it's now a dev dependency for building test PDFs. **Do not use PyMuPDF** (AGPL). OCR and layout-aware parsing (e.g. Docling) are phase 2. Their models must be baked into the image. |
+| Document parsing | `pypdfium2` (PDF), `python-docx`, `python-pptx`, `openpyxl`, `beautifulsoup4`, plain text/Markdown; Outlook `.msg` via `olefile` + `compressed-rtf` + `striprtf` (own reader, `app/ingestion/msg.py`; **not extract-msg, which is GPL-3.0**) | Permissive licences. pypdf ran words together on some PDFs; it's now a dev dependency for building test PDFs. **Do not use PyMuPDF** (AGPL). OCR and layout-aware parsing (e.g. Docling) are phase 2. Their models must be baked into the image. |
 | Background jobs | Postgres-backed queue (`SELECT … FOR UPDATE SKIP LOCKED`) run by a worker process | No Redis or Celery to deploy and support. |
 | Frontend | **React + TypeScript + Vite**, built to static files | No runtime CDN. Fonts and icons are bundled. |
 | Reverse proxy | **nginx** | Serves the frontend, proxies `/api`, terminates TLS using a customer-supplied certificate. Avoid Caddy's automatic HTTPS, which contacts ACME. |
@@ -220,7 +220,7 @@ bash scripts/egress-check.sh            # api/ollama/db must NOT reach the inter
 ## Current state
 
 Milestones 1–2 of `docs/build-plan.md` are implemented:
-- Formats: PDF, DOCX, PPTX, XLSX, CSV, HTML, TXT/MD (`app/ingestion/loaders.py`). Spreadsheet chunks are
+- Formats: PDF, DOCX, PPTX, XLSX, CSV, HTML, TXT/MD, MSG (`app/ingestion/loaders.py`). Spreadsheet chunks are
   `pre_chunked` (header repeated per chunk) and must not be re-split.
 - Upload → original stored as `<sha256>.<ext>` in the `uploads` volume → `ingest_jobs` row → `worker`
   service (`app/worker.py`) claims it with `FOR UPDATE SKIP LOCKED`, indexes, marks the document ready.
@@ -342,6 +342,27 @@ File shares, sidebar and responsiveness:
   waits. Without it, a question's embedding queued behind indexing in Ollama (71 s measured).
 - The worker reads `.env` (`env_file`) so indexing honours `EMBED_NUM_GPU=0`. Without it, indexing
   evicts the LLM from small GPUs.
+
+Outlook emails (`.msg`):
+- `app/ingestion/msg.py` reads them (MS-OXMSG on olefile). The body comes from plain text, else
+  HTML, else compressed RTF. Indexed text is header lines (subject, from, to, cc, date,
+  attachment names) plus the body. Every chunk's section is "subject (date)", so citations name
+  the email.
+- Supported attachments become **child documents** (migration 0007: `documents.parent_id`,
+  `attachment_key`), saved as `uploads/attachments/<sha256>.<ext>` (`app/ingestion/attachments.py`).
+  - An attached email is written out as a `.msg` (`app/ingestion/cfb.py`, a compound-file
+    writer), so nested attachments come from indexing it in turn.
+  - Children inherit the email's uploader and groups. Share children carry the share's
+    `source_id` and path `"<email path> › <name>"`.
+  - Share scans ignore children (`parent_id IS NULL`); they're re-synced when the email is
+    re-indexed.
+  - Children can't be deleted or re-shared on their own. Exclude/include and re-sharing an
+    email apply to its descendants.
+  - Inline images, unsupported types and oversized attachments are skipped with a log line
+    giving the attachment's position, never its name or content.
+- Upload `sha256` uniqueness covers top-level documents only (`parent_id IS NULL`).
+  Identical attachments share one stored file (`discard_unreferenced`) and copy chunks.
+- `tests/msgfile.py` builds `.msg` files for tests.
 
 ## Working conventions
 

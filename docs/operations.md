@@ -114,9 +114,16 @@ out-of-memory errors. A CPU/GPU split usually means another program is using the
 
 ## 3. Daily use
 
-- **Documents:** upload PDF, Word, PowerPoint, Excel, CSV, HTML, text or Markdown files, and
-  scanned images (PNG, JPEG, TIFF).
+- **Documents:** upload PDF, Word, PowerPoint, Excel, CSV, HTML, text or Markdown files,
+  scanned images (PNG, JPEG, TIFF), and Outlook emails (`.msg`).
   - Each document is visible only to its uploader, administrators, and the groups it's shared with.
+  - **Emails:** the subject, sender, recipients, date and body are indexed, and answers cite the
+    email by its subject and date. Attachments in a supported format become documents of their
+    own, listed under the email's name and shared exactly like the email. That includes an email
+    attached to an email, and its attachments in turn. Unsupported attachments and images
+    embedded in the body (signature logos) are skipped. Attachments follow their email:
+    re-indexing, excluding or deleting the email does the same to them, and they can't be
+    deleted or re-shared on their own.
   - Indexing runs in the background, and the status column shows progress.
   - Password-protected PDFs can't be read; PDFs that only restrict editing or printing can.
   - **Summaries:** click **Summary** next to a file, or limit the question to one file (up to

@@ -229,6 +229,15 @@ wheels = [
 ]
 
 [[package]]
+name = "compressed-rtf"
+version = "1.0.7"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/b7/0c/929a4e8ef9d7143f54d77dadb5f370cc7b98534b1bd6e1124d0abe8efb24/compressed_rtf-1.0.7.tar.gz", hash = "sha256:7c30859334839f3cdc7d10796af5b434bb326b9df7cb5a65e95a8eacb2951b0e", size = 8152, upload-time = "2025-03-24T22:39:32.062Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/07/1d/62f5bf92e12335eb63517f42671ed78512d48bbc69e02a942dd7b90f03f0/compressed_rtf-1.0.7-py3-none-any.whl", hash = "sha256:b7904921d78c67a0a4b7fff9fb361a00ae2b447b6edca010ce321cd98fa0fcc0", size = 7968, upload-time = "2025-03-24T23:03:57.433Z" },
+]
+
+[[package]]
 name = "et-xmlfile"
 version = "2.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -596,6 +605,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/6f/c9/47094f597015009f310b8c900def59065ef1ff5a6fe7b51fc65ec58ec2c6/numpy-2.5.4-cp312-cp312-win32.whl", hash = "sha256:9968ab7e49b93ac6e1c3b2239732183152c9150f16308d30b66a372cffe3483c", size = 6138936, upload-time = "2026-10-10T20:03:01.626Z" },
     { url = "https://files.pythonhosted.org/packages/12/33/fefe62073dc8acfd0f2b9ed7c003af2f50aa61555e113e6db02b8f79f145/numpy-2.5.4-cp312-cp312-win_amd64.whl", hash = "sha256:a7b1b6353e36a7e50de2973a38d705c88ee93adcf120673cee7f45a4a3fa223a", size = 12573091, upload-time = "2026-10-10T20:03:04.349Z" },
     { url = "https://files.pythonhosted.org/packages/1a/07/161270b0c2eec56e4c905f6d6d22e1b836887b2cb189d3f5820aa588e9dd/numpy-2.5.4-cp312-cp312-win_arm64.whl", hash = "sha256:aa1cce2ff3f8d953de38b76bf44602caeb69f101430208f64a10067f7cb4b1d3", size = 10521630, upload-time = "2026-10-10T20:03:06.767Z" },
+]
+
+[[package]]
+name = "olefile"
+version = "0.47"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/69/1b/077b508e3e500e1629d366249c3ccb32f95e50258b231705c09e3c7a4366/olefile-0.47.zip", hash = "sha256:599383381a0bf3dfbd932ca0ca6515acd174ed48870cbf7fee123d698c192c1c", size = 112240, upload-time = "2023-12-01T16:22:53.025Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/17/d3/b64c356a907242d719fc668b71befd73324e47ab46c8ebbbede252c154b2/olefile-0.47-py2.py3-none-any.whl", hash = "sha256:543c7da2a7adadf21214938bb79c83ea12b473a4b6ee4ad4bf854e7715e13d1f", size = 114565, upload-time = "2023-12-01T16:22:51.518Z" },
 ]
 
 [[package]]
@@ -993,10 +1011,12 @@ dependencies = [
     { name = "alembic" },
     { name = "argon2-cffi" },
     { name = "beautifulsoup4" },
+    { name = "compressed-rtf" },
     { name = "fastapi" },
     { name = "fastembed" },
     { name = "httpx" },
     { name = "ldap3" },
+    { name = "olefile" },
     { name = "openpyxl" },
     { name = "pgvector" },
     { name = "pillow" },
@@ -1007,6 +1027,7 @@ dependencies = [
     { name = "python-multipart" },
     { name = "python-pptx" },
     { name = "sqlalchemy" },
+    { name = "striprtf" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -1024,10 +1045,12 @@ requires-dist = [
     { name = "alembic", specifier = ">=1.13" },
     { name = "argon2-cffi", specifier = ">=23.1" },
     { name = "beautifulsoup4", specifier = ">=4.12" },
+    { name = "compressed-rtf", specifier = ">=1.0.6" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "fastembed", specifier = ">=0.5" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "ldap3", specifier = ">=2.9" },
+    { name = "olefile", specifier = ">=0.47" },
     { name = "openpyxl", specifier = ">=3.1" },
     { name = "pgvector", specifier = ">=0.3" },
     { name = "pillow", specifier = ">=10.1" },
@@ -1038,6 +1061,7 @@ requires-dist = [
     { name = "python-multipart", specifier = ">=0.0.9" },
     { name = "python-pptx", specifier = ">=1.0" },
     { name = "sqlalchemy", specifier = ">=2.0.30" },
+    { name = "striprtf", specifier = ">=0.0.26" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },
 ]
 
@@ -1132,6 +1156,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/48/bb/3d8757f21e9a53d9035c9eb039a777047139a16bfdbedfc7a58241c3d914/starlette-1.10.0.tar.gz", hash = "sha256:b8399098d4c1e3522734f7235dc79b1fc967f96cf139c81e0fa30479e0685f9b", size = 2734356, upload-time = "2026-10-24T15:04:12.342Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/88/2e/947cfe02def9371c07cd5bf5b6b61c829e9aecb9904db02a66cfafbc1eec/starlette-1.10.0-py3-none-any.whl", hash = "sha256:478c0ab3b4ced6e82719849c118fa406f0278a3499c1a898cd15cd31bdc38ce4", size = 80571, upload-time = "2026-10-24T15:04:10.371Z" },
+]
+
+[[package]]
+name = "striprtf"
+version = "0.0.35"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/25/ec/008fd13d23376e8f7a2f24f56381245218fb2322a17c41c4f944f54eeff9/striprtf-0.0.35.tar.gz", hash = "sha256:a21e8c4f73a791c3f23561df96701488c691ab1749a92487cc9e5fee6ea08455", size = 8017, upload-time = "2026-10-24T15:33:54.876Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/41/32/896d0597748a55913033a3a52de9a9449d0d479a1ac733a1e0178a537170/striprtf-0.0.35-py3-none-any.whl", hash = "sha256:2c8e207f47c9de355374d604167b17c99a06eb4d238e07cfba772f8669db60e4", size = 8448, upload-time = "2026-10-24T15:33:53.947Z" },
 ]
 
 [[package]]

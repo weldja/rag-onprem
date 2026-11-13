@@ -54,6 +54,9 @@ documents = Table(
     Column("progress_done", Integer, nullable=True),
     Column("progress_total", Integer, nullable=True),
     Column("indexed_at", DateTime(timezone=True), nullable=True),
+    # Migration 0007: an email attachment's email, and its position in it.
+    Column("parent_id", BigInteger, ForeignKey("documents.id", ondelete="CASCADE"), nullable=True),
+    Column("attachment_key", Text, nullable=True),
     UniqueConstraint("source_id", "source_path", name="uq_documents_source_path"),
     CheckConstraint(
         "status IN ('pending','processing','ready','failed','excluded')",

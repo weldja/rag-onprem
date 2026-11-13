@@ -92,7 +92,7 @@ def share(tmp_path: Path) -> Path:
     (root / "Archive").mkdir(parents=True)
     (root / "leave.txt").write_text("Annual leave: 25 days. " * 50)
     (root / "pay.txt").write_text("Pay bands")
-    (root / "mail.msg").write_bytes(b"outlook")
+    (root / "archive.zip").write_bytes(b"PK")
     (root / "empty.txt").write_bytes(b"")
     (root / "Archive" / "old.txt").write_text("old")
     return root
@@ -100,15 +100,15 @@ def share(tmp_path: Path) -> Path:
 
 def test_skipped_files_are_listed_with_reasons(db: Engine, share: Path) -> None:
     result = _scan(db, _settings(share.parent, share_1_exclude="Archive"))
-    assert result.skipped == 2  # .msg and the empty file; the excluded folder isn't counted
+    assert result.skipped == 2  # .zip and the empty file; the excluded folder isn't counted
     assert [(s.path, s.reason) for s in registry.list_skipped(db)] == [
         ("Archive/", "excluded"),
+        ("archive.zip", "unsupported"),
         ("empty.txt", "empty"),
-        ("mail.msg", "unsupported"),
     ]
-    (share / "mail.msg").unlink()
+    (share / "archive.zip").unlink()
     _scan(db, _settings(share.parent, share_1_exclude="Archive"))
-    assert "mail.msg" not in [s.path for s in registry.list_skipped(db)]  # replaced each scan
+    assert "archive.zip" not in [s.path for s in registry.list_skipped(db)]  # replaced each scan
 
 
 def test_exclude_include_and_reindex(db: Engine, share: Path) -> None:

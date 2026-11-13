@@ -22,6 +22,12 @@ dependencies = [
     "pypdfium2>=4.30",
     "pillow>=10.1",
     "ldap3>=2.9",
+    # Outlook .msg emails (app.ingestion.msg). Pure Python, no network use:
+    # olefile BSD-2-Clause, compressed-rtf MIT, striprtf BSD-3-Clause.
+    # extract-msg was not used: it is GPL-3.0.
+    "olefile>=0.47",
+    "compressed-rtf>=1.0.6",
+    "striprtf>=0.0.26",
 ]
 
 [dependency-groups]
@@ -66,5 +72,13 @@ strict = true
 packages = ["app"]
 
 [[tool.mypy.overrides]]
-module = ["pgvector.*", "openpyxl.*", "onnxruntime.*", "fastembed.*", "pypdfium2.*", "ldap3.*"]
+module = [
+    "pgvector.*", "openpyxl.*", "onnxruntime.*", "fastembed.*", "pypdfium2.*", "ldap3.*",
+    "olefile.*", "compressed_rtf.*", "striprtf.*",
+]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["app.ingestion.msg"]
+# striprtf ships untyped functions.
+disallow_untyped_calls = false

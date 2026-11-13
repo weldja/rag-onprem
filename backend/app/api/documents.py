@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from app.api.deps import AppSettings, CurrentUser, Db
-from app.ingestion import registry, storage
+from app.ingestion import attachments, registry, storage
 from app.ingestion.loaders import SUPPORTED_EXTENSIONS
 
 log = logging.getLogger(__name__)
@@ -52,6 +52,7 @@ class DocumentOut(BaseModel):
     progress_total: int | None = None
     indexed_at: datetime | None = None
     queue_position: int | None = None
+    parent_id: int | None = None  # the email this document was attached to
 
 
 class UploadOut(BaseModel):
@@ -200,7 +201,7 @@ def delete_document(
     doc_id: int, viewer: CurrentUser, engine: Db, settings: AppSettings
 ) -> Response:
     try:
-        path = registry.delete_document(engine, doc_id, viewer)
+        own, attached = registry.delete_document(engine, doc_id, viewer)
     except registry.NotFoundError as exc:
         raise _not_found(exc) from exc
     except registry.ForbiddenError as exc:
@@ -208,8 +209,10 @@ def delete_document(
     except registry.ConflictError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     # Only ever delete our own copy in the uploads volume, never a file elsewhere.
-    if path and Path(path).resolve().is_relative_to(Path(settings.upload_dir).resolve()):
-        storage.discard(path)
+    if own and Path(own).resolve().is_relative_to(Path(settings.upload_dir).resolve()):
+        storage.discard(own)
+    # An email's attachment files, unless another email has the same attachment.
+    attachments.discard_unreferenced(engine, attached, settings.upload_dir)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

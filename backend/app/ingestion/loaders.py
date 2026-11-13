@@ -21,13 +21,15 @@ from pathlib import Path
 from typing import Any
 
 from app.ingestion.chunking import Document
+from app.ingestion.msg import Email, MsgError, read_msg
 from app.ingestion.ocr import OcrError, OcrOptions, image_frames, ocr_image, render_pdf_page
 
 log = logging.getLogger(__name__)
 
 IMAGE_EXTENSIONS = frozenset({"png", "jpg", "jpeg", "tif", "tiff"})
 SUPPORTED_EXTENSIONS = (
-    frozenset({"pdf", "docx", "pptx", "xlsx", "csv", "html", "htm", "txt", "md"}) | IMAGE_EXTENSIONS
+    frozenset({"pdf", "docx", "pptx", "xlsx", "csv", "html", "htm", "txt", "md", "msg"})
+    | IMAGE_EXTENSIONS
 )
 
 SHEET_MAX_ROWS_PER_CHUNK = 25
@@ -41,6 +43,7 @@ class LoadError(ValueError):
 class LoadedDocument:
     pages: list[Document]  # pieces with extractable text, in document order
     page_count: int | None  # pages/slides for paged formats, else None
+    email: "Email | None" = None  # .msg: the parsed message, with its attachments
 
 
 def _clean(text: str) -> str:
@@ -397,6 +400,20 @@ def load_html(path: Path) -> LoadedDocument:
     )
 
 
+def load_msg(path: Path) -> LoadedDocument:
+    """An Outlook email: header lines (subject, sender, recipients, date,
+    attachment names) and body. Every chunk's section is the subject and date,
+    so citations show which email it was. Attachments are indexed as documents
+    of their own (pipeline.sync_attachments)."""
+    try:
+        mail = read_msg(str(path))
+    except MsgError as exc:
+        raise LoadError(str(exc)) from exc
+    text = _clean(mail.text())
+    meta = {"section": mail.label[:200]}
+    return LoadedDocument(pages=[Document(text, meta)], page_count=None, email=mail)
+
+
 def load_text(path: Path) -> LoadedDocument:
     text = _clean(path.read_bytes().decode("utf-8-sig", errors="replace"))
     return LoadedDocument(pages=[Document(text)] if text else [], page_count=None)
@@ -425,6 +442,8 @@ def load_file(
         return load_html(path)
     if ext in ("txt", "md"):
         return load_text(path)
+    if ext == "msg":
+        return load_msg(path)
     raise LoadError(f"Unsupported file type: .{ext}")
 
 

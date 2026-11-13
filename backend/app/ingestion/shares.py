@@ -244,7 +244,12 @@ def scan_source(
                     documents.c.source_mtime,
                     documents.c.sha256,
                     documents.c.status,
-                ).where(documents.c.source_id == source.id)
+                ).where(
+                    documents.c.source_id == source.id,
+                    # Email attachments aren't files on the share: they follow
+                    # their email (app.ingestion.attachments).
+                    documents.c.parent_id.is_(None),
+                )
             )
         }
 
