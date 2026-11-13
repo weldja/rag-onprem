@@ -13,7 +13,7 @@ Run all commands from the bundle folder, as a user allowed to run Docker.
 | OS | 64-bit Linux with Docker Engine 24+ and the Compose v2 plugin | Ubuntu 22.04/24.04 LTS, RHEL 9 |
 | CPU | 4 cores with AVX2 | 8+ cores |
 | RAM | 12 GB | 16 GB+ |
-| Disk | 32 GB free for Docker | 50 GB+, plus room for documents and backups |
+| Disk | 25 GB free for Docker | 40 GB+, plus room for documents and backups |
 | GPU | none | **NVIDIA with 8 GB+ VRAM** and the NVIDIA Container Toolkit |
 | Network | ports 80 and 443 reachable from staff PCs | a DNS name and a certificate for it |
 
@@ -87,6 +87,30 @@ Configuration lives in `.env`, which is readable only by its owner. After changi
 | `PASSWORD_MIN_LENGTH` | minimum length of local passwords (default 12, lowest 1). Any characters are allowed, including spaces. Lowering it makes passwords easier to guess. |
 | `LLM_MODEL` | the answer model: `qwen3:4b-instruct-2507-q4_K_M` (default) or another model listed in `LLM_EXTRA_MODELS` (see **Requirements**). |
 | `LLM_EXTRA_MODELS`, `EMBED_MODEL`, `RAG_VERSION` | set by the bundle. Don't change them; the models are built into the images. |
+
+### Checking a new GPU server
+
+Do this once after installing on a server with an NVIDIA GPU of 8 GB or more, with a few documents
+indexed.
+
+1. **Both models on the GPU while answering.** Ask a question in the browser, then run
+   `docker compose exec ollama ollama ps`. Both lines (`qwen3:4b-instruct-2507-q4_K_M` and
+   `bge-m3`) should show `100% GPU` in the PROCESSOR column. On a card under 6 GB, `bge-m3`
+   shows `100% CPU` by design.
+2. **Both models stay on the GPU while indexing.** Upload a large document (or press **Scan now**
+   on a share). While the Indexing page shows progress, ask a question and run `ollama ps` again.
+   Both models must still be listed with `100% GPU`. If one is missing or shows a CPU/GPU split,
+   the card can't hold both: set `EMBED_NUM_GPU=0` (or `OLLAMA_KV_CACHE_TYPE=q8_0`) in `.env` and
+   run `docker compose up -d`.
+3. **First words within 10 seconds.** Ask five questions about your documents, then run
+   `docker compose logs api | grep "answer timing"`. `first_word` should be under `10000ms` on
+   each line. A repeated question is answered from memory (`cached=True`), so it doesn't count.
+4. **Note the results** (card model and memory, `ollama ps` output, `first_word` times) with your
+   installation records. They help when comparing after an upgrade.
+
+If step 1 fails on an 8 GB+ card, raise `LLAMA_ARG_FIT_TARGET` only if the ollama log shows
+out-of-memory errors. A CPU/GPU split usually means another program is using the card:
+`nvidia-smi` lists them.
 
 ## 3. Daily use
 

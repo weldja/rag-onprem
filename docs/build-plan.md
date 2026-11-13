@@ -105,6 +105,12 @@ that point to real pages, and the API container cannot reach the internet.
 - Backup and restore (`pg_dump` plus the uploads volume), upgrade path, admin documentation
 - Egress test in CI: on the compose network, verify that outbound connections fail
 
+## Backlog
+- **Evaluate `qwen3.5:4b` on an 8 GB+ GPU** (noted 2026-11-13) with thinking disabled and the vision
+  component unused. Adopt it only if it matches or beats `qwen3:4b-instruct-2507-q4_K_M` on both
+  evals (eval corpus and real documents) and on time to first word. It doesn't fit the 4 GB laptop
+  card (3.3–4.0 GB), so don't try it there. Check its licence first.
+
 ## Verification (M1)
 1. `bash scripts/dev-up.sh` → all services healthy; `curl localhost:8000/api/health` shows the db and both models ready.
 2. `cd backend && uv run pytest` passes with sockets disabled.

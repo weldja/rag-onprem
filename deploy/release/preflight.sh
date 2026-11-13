@@ -59,10 +59,10 @@ root="$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || echo /var/lib/d
 free_gb="$( (df -Pk "$root" 2>/dev/null || true) | awk 'NR==2 {printf "%d", $4/1024/1024}')"
 [ -n "$free_gb" ] || free_gb="$( (df -Pk . 2>/dev/null || true) | awk 'NR==2 {printf "%d", $4/1024/1024}')"
 free_gb="${free_gb:-0}"
-# The images take about 28 GB once loaded (both answer models are included).
-if [ "$free_gb" -ge 50 ]; then ok "${free_gb} GB free for Docker"
-elif [ "$free_gb" -ge 32 ]; then warn "${free_gb} GB free for Docker: enough to install, little room for documents (50+ recommended)"
-else fail "${free_gb} GB free for Docker: at least 32 GB required"; problems=$((problems + 1)); fi
+# The images take about 14 GB once loaded (both answer models; 1.0.0-rc7).
+if [ "$free_gb" -ge 40 ]; then ok "${free_gb} GB free for Docker"
+elif [ "$free_gb" -ge 25 ]; then warn "${free_gb} GB free for Docker: enough to install, little room for documents (40+ recommended)"
+else fail "${free_gb} GB free for Docker: at least 25 GB required"; problems=$((problems + 1)); fi
 
 # --- Ports ------------------------------------------------------------------
 http_port=80 https_port=443
