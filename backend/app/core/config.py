@@ -85,6 +85,9 @@ class Settings(BaseSettings):
 
     # Retrieval
     top_k: int = Field(default=6, gt=0, le=50)
+    # Longest part of each excerpt the model reads when answering (characters;
+    # 0 = whole chunks). Shorter prompts start answers sooner on a slow GPU.
+    excerpt_max_chars: int = Field(default=0, ge=0)
     retrieval_candidates: int = Field(default=30, gt=0, le=200)  # per leg, before fusion
     min_similarity: float = Field(default=0.35, ge=-1.0, le=1.0)
     keyword_keep: int = Field(default=5, ge=0)  # top keyword hits kept even below min_similarity
