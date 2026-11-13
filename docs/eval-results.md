@@ -258,6 +258,47 @@ finished indexing, same cases plus two typed summaries; 34 answerable, 4 unanswe
 - First word on answered questions: 10.3 s median, range 6.9–18.0 s. The slowest are the
   technical PDFs, whose excerpts are full 1,000-character chunks.
 
+## Single answer model, release 1.0.0-rc7 (2026-11-13, laptop install, q8_0)
+
+From rc7, Qwen3 4B is the default on every install. The 7B ships in the same bundle as an option
+(see "GPU memory budget"). The laptop install was upgraded from 1.0.0-rc6.small. Its `.env` kept
+the small-card settings (ctx 4096, 768 tokens, `EMBED_NUM_GPU=0`, `OLLAMA_KV_CACHE_TYPE=q8_0`).
+
+- **Placement:** `ollama ps` shows `qwen3:4b-instruct-2507-q4_K_M` at 100% GPU (2.9 GB) and
+  `bge-m3` at 100% CPU. That's as intended for a card under 6 GB.
+- **Model IDs** in the rc7 ollama image:
+  - `qwen3:4b-instruct-2507-q4_K_M` `0edcdef34593`
+  - `qwen2.5:7b-instruct` `845dbda0ea48`
+  - `bge-m3` `790764642607`
+- **Image sizes:** the ollama image is 11.9 GB and the bundle 12 GB.
+
+**This is the q8_0 KV-cache result.** Both earlier small-GPU runs most likely already used q8_0,
+and the numbers match them:
+
+| Metric | Eval corpus (34) | Real documents (42) |
+|---|---|---|
+| Retrieval recall | 1.000 | 1.000 (document level) |
+| Citation recall | 1.000 | 0.941 |
+| Citation precision | 0.929 | 1.000 |
+| Answer accuracy | 1.000 | 0.941 |
+| False not-found | 0 | 0.059 (`cr-priority`, `rn-xfp`; see above) |
+| Abstention | 1.0 | 1.0 |
+| Summaries accurate / cited | 4/4, 3/4 | 4/4\*, 4/4 |
+| Collection questions | 2/2 | – |
+| Median first word, questions | 3.6 s | 9.7 s (answered only: 10.3 s, range 6.7–16.7 s; 15 of 32 under 10 s) |
+| Median total, questions | 4.7 s | 13.6 s |
+| Median first word / total, summaries | – / 16.2 s | 7.4 s / 34.7 s |
+
+\* `sum-cp-typed` wrote "a 5-working-day acknowledgement". It was scored as missing "5 working
+days", so the case now accepts the hyphenated form.
+
+**One CUDA error during the first run:** at 10:47, llama-server aborted on a matrix multiply
+(`CUDA error: unknown error`). Windows logged no driver event. Ollama restarted the runner without
+restarting the container, but the eval in progress failed and the next two answers waited 36–67 s
+for the reload. A clean rerun produced the numbers above, with no further errors in ~80 questions.
+The error was not seen before on this card. If it recurs, look at the WSL2/NVIDIA driver before
+the model settings.
+
 - **Summary of a short document skipped a section (fixed).** Complaints_Procedure.docx is 7
   small chunks; sampling 6 dropped the one with the response deadlines. A document that fits in
   per-document chunks × `CHUNK_SIZE` characters is now read whole (case `summary-short-sections`).
