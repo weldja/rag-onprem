@@ -11,6 +11,8 @@ Metrics (answerable cases unless noted):
   answer_accuracy    every expected fact (any of its spellings) is in the answer
   false_not_found    answerable, but the system said it couldn't find it
   abstention         unanswerable cases correctly answered "not found"
+  first_word         seconds to the first non-blank streamed token (to the final
+                     event when no token comes, e.g. a gated "not found")
   summary_cited      summary cases ("summary_of") that cite the summarised document
   summary_accuracy   summary cases that contain every expected fact
   library_accuracy   questions about the collection itself ("library": true),
@@ -53,6 +55,7 @@ class CaseResult:
     cited_relevant: int = 0
     answer_correct: bool = False
     seconds: float = 0.0
+    first_word_seconds: float = 0.0
     answer: str = ""
     cited_sources: list[str] = field(default_factory=list)
     retrieved_sources: list[str] = field(default_factory=list)  # [n] order, for diagnosis
@@ -142,10 +145,36 @@ def setup(admin: httpx.Client, corpus_dir: Path) -> str:
     return password
 
 
+def ask_streamed(client: httpx.Client, payload: dict[str, Any]) -> tuple[dict[str, Any], float]:
+    """POST /api/ask/stream as the browser does. Returns the `done` event's
+    body and the seconds to the first non-blank token (or to `done` if no
+    token came, e.g. a "not found" from the relevance gate)."""
+    started = time.monotonic()
+    first_word: float | None = None
+    event = ""
+    with client.stream("POST", "/api/ask/stream", json=payload) as resp:
+        resp.raise_for_status()
+        for line in resp.iter_lines():
+            if line.startswith("event: "):
+                event = line[7:]
+            elif line.startswith("data: "):
+                data = json.loads(line[6:])
+                if event == "token" and first_word is None and data["text"].strip():
+                    first_word = time.monotonic() - started
+                elif event == "done":
+                    return data, first_word if first_word is not None else (
+                        time.monotonic() - started
+                    )
+                elif event == "error":
+                    raise RuntimeError(f"stream error: {data.get('message')}")
+    raise RuntimeError("stream ended without a done event")
+
+
 def run_case(
     client: httpx.Client, case: dict[str, Any], doc_ids: dict[str, int] | None = None
 ) -> tuple[CaseResult, str | None]:
-    """Ask one case; returns its result and the server's prompt version."""
+    """Ask one case (streamed, as the UI does); returns its result and the
+    server's prompt version (None from builds whose stream doesn't send it)."""
     payload: dict[str, Any] = {
         "question": case["question"],
         "history": case.get("history", []),
@@ -158,9 +187,7 @@ def run_case(
         if not case.get("typed"):
             payload["mode"] = "summary"
     started = time.monotonic()
-    resp = client.post("/api/ask", json=payload)
-    resp.raise_for_status()
-    body = resp.json()
+    body, first_word = ask_streamed(client, payload)
     elapsed = time.monotonic() - started
     answerable = case.get("expect_found", True)
     result = CaseResult(
@@ -168,6 +195,7 @@ def run_case(
         answerable=answerable,
         found=body["found"],
         seconds=round(elapsed, 2),
+        first_word_seconds=round(first_word, 2),
         answer=body["answer"],
         cited_sources=[f"[{s['id']}] {_label(s)}" for s in body["sources"]],
         retrieved_sources=[f"[{s['id']}] {_label(s)}" for s in body.get("retrieved", [])],
@@ -220,6 +248,11 @@ def summarise(results: list[CaseResult]) -> dict[str, float]:
         "median_seconds": round(statistics.median(r.seconds for r in ans + un), 2)
         if ans + un
         else 0.0,
+        "median_first_word_seconds": round(
+            statistics.median(r.first_word_seconds for r in ans + un), 2
+        )
+        if ans + un
+        else 0.0,
         "max_seconds": max((r.seconds for r in ans + un), default=0.0),
         "summary_cases": len(summ),
         "summary_cited": rate([r.citation_hit for r in summ]),
@@ -230,6 +263,12 @@ def summarise(results: list[CaseResult]) -> dict[str, float]:
         "library_cases": len(lib),
         "library_accuracy": rate([r.answer_correct for r in lib]),
     }
+
+
+def _local_prompt_version() -> str:
+    from app.llm.prompts import prompt_version
+
+    return prompt_version() + " (eval image)"
 
 
 def main() -> int:
@@ -254,14 +293,18 @@ def main() -> int:
     results: list[CaseResult] = []
     prompt_version = None
     for case in cases:
-        result, prompt_version = run_case(user, case, doc_ids)
+        result, version = run_case(user, case, doc_ids)
+        prompt_version = version or prompt_version
         results.append(result)
         mark = (
             ("ok " if result.answer_correct else "BAD")
             if result.answerable
             else ("ok " if not result.found else "BAD")
         )
-        print(f"{mark} {result.id:<22} {result.seconds:6.1f}s  cites: {result.cited_sources}")
+        print(
+            f"{mark} {result.id:<22} {result.first_word_seconds:5.1f}s/{result.seconds:5.1f}s"
+            f"  cites: {result.cited_sources}"
+        )
         sys.stdout.flush()
 
     metrics = summarise(results)
@@ -270,7 +313,9 @@ def main() -> int:
         "timestamp": datetime.now(UTC).isoformat(timespec="seconds"),
         "models": health.get("models"),
         "reranker": health.get("reranker"),
-        "prompt_version": prompt_version,
+        # Older servers don't send it on the stream; the eval image's own
+        # prompts are then the best guess (same commit as the server).
+        "prompt_version": prompt_version or _local_prompt_version(),
         "metrics": metrics,
         "cases": [asdict(r) for r in results],
     }

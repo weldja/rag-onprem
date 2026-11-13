@@ -47,6 +47,14 @@ The eval user sees only the eval corpus.
 | Qwen3 4B, main on 2026-11-12 (baseline for the next row) | `277b9220b4` | 1.000 | 1.000 | 0.963 | 1.000 | 0 | 1.0 | 4.9 |
 | **Qwen3 4B, `<excerpt>` tags + collection rule (2026-11-12)** | `89d969a6d5` | **1.000** | **1.000** | 0.929 | **1.000** | **0** | **1.0** | **4.9** |
 | **7B, `<excerpt>` tags + collection rule, small-GPU settings†** | `89d969a6d5` | **1.000** | **1.000** | **1.000** | **1.000** | **0** | **1.0** | 11.4 |
+| Qwen3 4B, laptop install, `OLLAMA_KV_CACHE_TYPE=q8_0`, streamed (2026-11-13)‡ | `89d969a6d5` | 1.000 | 1.000 | 0.929 | 1.000 | 0 | 1.0 | 4.9 (first word 3.7) |
+
+‡ Asked over `/api/ask/stream` as the UI does, so the run also records time to the first word
+(`first_word_seconds`, `median_first_word_seconds`). Identical to the 2026-11-12 row on every
+metric; summaries 4/4 accurate, 3/4 cited, median 16 s. The dev `.env` already had q8_0 then,
+so this mostly confirms that the earlier runs used it. The eval corpus has short chunks
+(~200 characters), so its prompts are small: 3–5 s to the first word. The real documents show
+the actual latency (see "Real documents").
 
 Summary cases (`summary_of` in `cases.json`, added 2026-11-08): Qwen3 4B cited and accurate 2/2,
 median 22 s. In an earlier hand check one of its two summaries was accurate but uncited, so summary
@@ -196,6 +204,29 @@ model already loaded, `num_ctx` 8192:
 non-admin user (cases and answers kept out of the repo; they quote those documents):
 retrieval recall 1.0, citation recall 0.971, citation precision 0.947, answer accuracy 0.971,
 abstention 1.0 (4/4), follow-up 1/1, summaries 1/2. Median 14 s per question.
+
+**Re-run 2026-11-13** (q8_0 KV cache, streamed, 15 documents after `ENC_User_Manual.pdf`
+finished indexing, same cases plus two typed summaries; 34 answerable, 4 unanswerable, 4 summaries):
+
+| Metric | 2026-11-09 | 2026-11-13 |
+|---|---|---|
+| Retrieval recall (document level) | 1.0 | 1.0 |
+| Citation recall | 0.971 | 0.941 |
+| Citation precision | 0.947 | 1.000 |
+| Answer accuracy | 0.971 | 0.941 |
+| Abstention | 1.0 | 1.0 |
+| Summaries accurate | 1/2 | 4/4 |
+| Median first word / total, questions | – / 14 s | **10.1 s** / 13.9 s |
+| Median first word / total, summaries | – | 7.5 s / 33 s |
+
+- The two misses are retrieval, not the KV cache. `cr-priority` is the form-style DOCX problem
+  below. `rn-xfp` passed on 11-09 from page 116. Since the PDF re-index (pypdfium2, document name
+  in the embedding input), six near-identical transceiver descriptions (pp. 117–128) outrank it.
+  The chunk is intact: "XFP/10G/850I/MM/LC … operating at a wavelength of 850 nm".
+- This set's retrieval recall only checks the document, not the page, so it hides misses like
+  `rn-xfp`.
+- First word on answered questions: 10.3 s median, range 6.9–18.0 s. The slowest are the
+  technical PDFs, whose excerpts are full 1,000-character chunks.
 
 - **Summary of a short document skipped a section (fixed).** Complaints_Procedure.docx is 7
   small chunks; sampling 6 dropped the one with the response deadlines. A document that fits in

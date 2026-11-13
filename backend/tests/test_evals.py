@@ -4,9 +4,11 @@ producible by our loaders; otherwise the eval measures nothing."""
 import json
 from pathlib import Path
 
+import httpx
+
 from app.ingestion.loaders import load_file
 from evals.corpus import build
-from evals.run_eval import CaseResult, _matches, summarise
+from evals.run_eval import CaseResult, _matches, ask_streamed, summarise
 
 CASES = json.loads((Path(__file__).parent.parent / "evals" / "cases.json").read_text())
 
@@ -83,6 +85,34 @@ def test_summary_cases_are_scored_separately() -> None:
     assert m["summary_cited"] == 0.5
     assert m["summary_accuracy"] == 1.0
     assert m["summary_median_seconds"] == 25.0
+
+
+def _sse_client(events: list[tuple[str, dict[str, object]]]) -> httpx.Client:
+    body = "".join(f"event: {k}\ndata: {json.dumps(v)}\n\n" for k, v in events)
+    return httpx.Client(
+        base_url="http://test",
+        transport=httpx.MockTransport(lambda req: httpx.Response(200, text=body)),
+    )
+
+
+def test_ask_streamed_returns_done_and_times_the_first_word() -> None:
+    client = _sse_client(
+        [
+            ("status", {"stage": "retrieving"}),
+            ("token", {"text": "  "}),  # blank: not a word yet
+            ("token", {"text": "Five days [1]."}),
+            ("done", {"answer": "Five days [1].", "found": True, "sources": []}),
+        ]
+    )
+    body, first_word = ask_streamed(client, {"question": "q"})
+    assert body["answer"] == "Five days [1]."
+    assert 0 <= first_word < 5
+
+
+def test_ask_streamed_without_tokens_times_the_done_event() -> None:
+    client = _sse_client([("done", {"answer": "not found", "found": False, "sources": []})])
+    body, first_word = ask_streamed(client, {"question": "q"})
+    assert body["found"] is False and first_word >= 0
 
 
 def test_summary_cases_name_a_corpus_document(tmp_path: Path) -> None:
