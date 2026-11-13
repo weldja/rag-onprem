@@ -71,6 +71,23 @@ def test_reads_headers_body_and_date(tmp_path: Path) -> None:
     assert "Date: 04 March 2026 14:05 UTC" in text
 
 
+def test_link_targets_are_dropped_and_long_urls_shortened(tmp_path: Path) -> None:
+    safelink = "https://eur01.safelinks.protection.outlook.com/?url=https%3A%2F%2Fx.example" + (
+        "%2Fa" * 60
+    )
+    body = (
+        f"Join the meeting now <{safelink}>\r\n"
+        "Mail me <mailto:dana@example.com> or call <tel:+441234>.\r\n"
+        f"Raw link: {safelink}\r\nShort link: https://intranet/leave stays."
+    )
+    mail = read_msg(str(_write(tmp_path, Msg(subject="Links", body=body))))
+    assert mail.body == (
+        "Join the meeting now\nMail me or call.\n"
+        "Raw link: https://eur01.safelinks.protection.outlook.com/…\n"
+        "Short link: https://intranet/leave stays."
+    )
+
+
 def test_email_with_no_body_still_has_its_headers(tmp_path: Path) -> None:
     path = _write(
         tmp_path,

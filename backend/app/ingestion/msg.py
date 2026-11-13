@@ -14,6 +14,7 @@ with the same layout as a top-level message.
 
 import email.utils
 import logging
+import re
 import struct
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -222,8 +223,22 @@ def _rtf_to_text(compressed: bytes) -> str:
     return _tidy(text)
 
 
+# Outlook writes each link as "text <https://...>"; Office 365 wraps every URL
+# in a ~400-character "safelinks" redirect. Link targets carry no answerable
+# content, but cost the model ~2.5 characters per token to read and match
+# keywords ("request", "data") in every question.
+_LINK_TARGET = re.compile(r"\s*<(?:https?|mailto|tel|file):[^>\s]*>", re.IGNORECASE)
+_LONG_URL = re.compile(r"(https?://[^/\s?#]+)[^\s<>\"']{40,}", re.IGNORECASE)
+
+
+def _strip_links(text: str) -> str:
+    """Drop link targets after link text, and cut bare long URLs to their host."""
+    return _LONG_URL.sub(r"\1/…", _LINK_TARGET.sub("", text))
+
+
 def _tidy(text: str) -> str:
     out: list[str] = []
+    text = _strip_links(text)
     for line in (ln.rstrip() for ln in text.replace("\r\n", "\n").split("\n")):
         if line or (out and out[-1]):  # collapse runs of blank lines
             out.append(line)
